@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SPICE Konsole</title>
+<link rel="stylesheet" href="spice.css">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; background: #06080d; overflow: hidden; }
+
+#spice-area {
+  position: fixed;
+  inset: 0;
+  bottom: 56px;
+  overflow: hidden;
+  background: #000;
+}
+.spice-screen { width: 100% !important; height: 100% !important; }
+#spice-area canvas {
+  display: block; /* eliminate inline baseline gap */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/*
+  Touch overlay — starts with pointer-events: none so the desktop mouse
+  reaches SPICE's canvas directly. Activated (touch-active class) on first
+  real touchstart so touch devices get the trackpad control layer.
+*/
+#touch-overlay {
+  position: fixed;
+  inset: 0;
+  bottom: 56px;
+  z-index: 50;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: none;   /* desktop: mouse passes through */
+}
+#touch-overlay.touch-active {
+  pointer-events: auto;   /* touch: intercept all events */
+  cursor: none;           /* hide real cursor on touch devices */
+}
+
+/* Virtual cursor crosshair — touch mode only */
+#vcursor {
+  position: fixed; width: 20px; height: 20px;
+  pointer-events: none; z-index: 60;
+  display: none; transform: translate(-50%, -50%);
+}
+#vcursor::before, #vcursor::after {
+  content: ''; position: absolute;
+  background: rgba(255,255,255,0.85);
+}
+#vcursor::before { left:50%; top:0; width:1.5px; height:100%; transform:translateX(-50%); box-shadow:0 0 2px rgba(0,0,0,.8); }
+#vcursor::after  { top:50%; left:0; height:1.5px; width:100%; transform:translateY(-50%); box-shadow:0 0 2px rgba(0,0,0,.8); }
+#vcursor-dot {
+  position:absolute; width:4px; height:4px; background:#fff; border-radius:50%;
+  top:50%; left:50%; transform:translate(-50%,-50%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.7);
+}
+
+#toolbar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 56px;
+  display: flex; align-items: center; justify-content: flex-start;
+  gap: 6px; padding: 0 10px;
+  background: rgba(6,8,13,0.94);
+  border-top: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  z-index: 200; overflow-x: auto; touch-action: pan-x;
+}
+.t-btn {
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+  color: #c8d4e8; border-radius: 8px; padding: 8px 13px;
+  font-size: 13px; font-family: system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.t-btn:active { background: rgba(255,255,255,0.25); }
+.t-btn.kb-on  { background: rgba(168,85,247,0.2); border-color: #a855f7; color: #a855f7; }
+
+#status-bar {
+  position: fixed; bottom: 56px; left: 0; right: 0;
+  padding: 7px 14px; background: rgba(6,8,13,0.88);
+  color: #a855f7; font: 12px/1.4 monospace;
+  text-align: center; z-index: 201; pointer-events: none;
+  transition: opacity 0.6s;
+}
+#kb-area {
+  position: fixed; top: -200px; left: 0;
+  width: 1px; height: 1px; opacity: 0; font-size: 16px;
+  resize: none; border: none; outline: none;
+  background: transparent; color: transparent; caret-color: transparent;
+}
+</style>
+</head>
+<body>
+
+<!-- Clipboard panel -->
+<div id="clip-panel" style="display:none;position:fixed;top:0;left:0;right:0;z-index:210;background:rgba(6,8,13,0.97);border-bottom:1px solid rgba(255,255,255,0.1);padding:10px 12px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);">
+  <textarea id="clip-box" rows="3" placeholder="Text einfügen (long-press → Paste) …" style="width:100%;background:#0d1320;color:#c8d4e8;border:1px solid #2a3a52;border-radius:6px;padding:8px 10px;font:13px/1.5 monospace;resize:none;outline:none;display:block;box-sizing:border-box;"></textarea>
+  <div style="display:flex;gap:6px;margin-top:8px;">
+    <button onclick="clipRead()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">📥 Zwischenablage laden</button>
+    <button onclick="clipType()" style="flex:1;background:#00e87b;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Eintippen</button>
+    <button onclick="toggleClip()" style="background:rgba(255,255,255,0.05);color:#8b9dc3;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer;">✕</button>
+  </div>
+</div>
+
+<div id="status-bar">Verbinde…</div>
+<div id="spice-area">
+  <div id="spice-screen" class="spice-screen"></div>
+</div>
+<div id="touch-overlay"></div>
+<div id="vcursor"><div id="vcursor-dot"></div></div>
+
+<textarea id="kb-area" autocomplete="off" autocorrect="off"
+  autocapitalize="off" spellcheck="false" tabindex="-1" rows="1"></textarea>
+
+<div id="toolbar">
+  <button class="t-btn" id="btn-kb"  onclick="toggleKb()">⌨ Tastatur</button>
+  <button class="t-btn"              onclick="toggleClip()">📋</button>
+  <button class="t-btn"              onclick="sendCad()">Ctrl+Alt+Del</button>
+  <button class="t-btn"              onclick="kp('Enter',13)">↵</button>
+  <button class="t-btn"              onclick="kp('Escape',27)">Esc</button>
+  <button class="t-btn"              onclick="kp('Backspace',8)">⌫</button>
+  <button class="t-btn"              onclick="kp('Tab',9)">Tab</button>
+  <button class="t-btn"              onclick="kp('ArrowUp',38)">↑</button>
+  <button class="t-btn"              onclick="kp('ArrowDown',40)">↓</button>
+  <button class="t-btn"              onclick="kp('ArrowLeft',37)">←</button>
+  <button class="t-btn"              onclick="kp('ArrowRight',39)">→</button>
+</div>
+
+<script type="module"> window._spice_esm = true; </script>
+<script>
+window.addEventListener('load', function() {
+  if (!window._spice_esm) {
+    var s = document.createElement('script');
+    s.src = 'thirdparty/browser-es-module-loader/dist/browser-es-module-loader.js';
+    document.head.appendChild(s);
+  }
+});
+</script>
+
+<script type="module">
+import * as SpiceHtml5 from './main.js';
+import { SpiceMiniData, SpiceMsgcMousePosition, SpiceMsgcMouseMotion,
+         SpiceMsgcMousePress, SpiceMsgcMouseRelease, SpiceMsgcKeyDown } from './spicemsg.js';
+import { Constants } from './enums.js';
+
+const statusBar  = document.getElementById('status-bar');
+const kbArea     = document.getElementById('kb-area');
+const btnKb      = document.getElementById('btn-kb');
+const spiceArea  = document.getElementById('spice-area');
+const vcursorEl  = document.getElementById('vcursor');
+const overlay    = document.getElementById('touch-overlay');
+let sc = null;
+let touchMode = false;
+
+// ── Keyboard layout: server keymap (from URL) takes priority over client locale ─
+const _XKB_LANG = {
+  'de':'de-DE','at':'de-AT','ch':'de-CH',
+  'fr':'fr-FR','fr-be':'fr-BE','fr-ch':'fr-CH','be':'fr-BE','ca':'fr-CA',
+  'us':'en-US','en-us':'en-US','gb':'en-GB','en-gb':'en-GB',
+  'es':'es-ES','latam':'es-419',
+  'pt':'pt-PT','pt-br':'pt-BR','br':'pt-BR',
+  'it':'it-IT','nl':'nl-NL','nl-be':'nl-BE','pl':'pl-PL',
+  'ru':'ru-RU','tr':'tr-TR','sv':'sv-SE',
+  'no':'nb-NO','fi':'fi-FI','da':'da-DK',
+  'cs':'cs-CZ','cz':'cs-CZ','sk':'sk-SK','hu':'hu-HU',
+  'ro':'ro-RO','ua':'uk-UA','uk':'uk-UA','bg':'bg-BG',
+  'gr':'el-GR','el':'el-GR','il':'he-IL','he':'he-IL','jp':'ja-JP','ja':'ja-JP',
+  'kr':'ko-KR','ko':'ko-KR','cn':'zh-CN','zh-cn':'zh-CN','tw':'zh-TW','zh-tw':'zh-TW',
+};
+const _serverKeymap = new URLSearchParams(location.search).get('keymap') || '';
+const _xkbLayout    = _serverKeymap || 'us';
+const _kbLang       = _XKB_LANG[_xkbLayout] || navigator.language || 'en';
+kbArea.lang         = _kbLang;
+btnKb.textContent   = `⌨ ${_xkbLayout.toUpperCase()}`;
+
+function setStatus(msg, color = '#a855f7', persist = false) {
+  statusBar.textContent = msg;
+  statusBar.style.color = color;
+  statusBar.style.opacity = '1';
+  if (!persist) setTimeout(() => statusBar.style.opacity = '0', 3000);
+}
+
+// ── RTT monitor — shown in status bar ────────────────────────────────────────
+let _rtt = 0;
+async function _pingRtt() {
+  const t0 = performance.now();
+  try { await fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(3000) }); }
+  catch { return; }
+  _rtt = Math.round(performance.now() - t0);
+}
+setInterval(async () => {
+  await _pingRtt();
+  if (_rtt > 0) {
+    const col = _rtt < 70 ? '#00e87b' : _rtt < 200 ? '#fbbf24' : '#ef4444';
+    setStatus(`SPICE ● ${_rtt} ms RTT`, col);
+  }
+}, 4000);
+
+// ── Connect ──────────────────────────────────────────────────────────────────
+const loc    = window.location;
+const scheme = loc.protocol === 'https:' ? 'wss://' : 'ws://';
+const uri    = scheme + loc.host + '/websockify';
+
+function onError(e) {
+  if (sc) sc.stop();
+  if (e?.message === 'Permission denied.') {
+    const pw = prompt('SPICE Passwort:');
+    if (pw !== null) connect(pw);
+  } else {
+    setStatus('Fehler: ' + (e?.message || 'Unbekannt'), '#ef4444', true);
+  }
+}
+
+// Request the VM display to resize to exactly the #spice-area dimensions.
+// resize_helper() from spice-html5 uses window.innerHeight - 20 which doesn't
+// account for our 56px toolbar — causing the VM canvas to overflow and the top
+// of the image to be shifted out of view.
+let _resizeTimer = null;
+function requestResizeToArea() {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => {
+    if (!sc) return;
+    const area = spiceArea.getBoundingClientRect();
+    let w = Math.floor(area.width);
+    let h = Math.floor(area.height);
+    // Xorg requires dimensions to be multiples of 8
+    if (w % 8 > 0) w -= (w % 8);
+    if (h % 8 > 0) h -= (h % 8);
+    if (w > 0 && h > 0) sc.resize_window(0, w, h, 32, 0, 0);
+  }, 200);
+}
+
+function onAgent(conn) {
+  window.spice_connection = conn;
+  requestResizeToArea();
+  window.addEventListener('resize', requestResizeToArea);
+  if (touchMode) initCursor();
+  if (_serverKeymap) fetch(`/api/setkbmap?layout=${_serverKeymap}`).catch(()=>{});
+}
+
+function connect(pw) {
+  if (sc) sc.stop();
+  try {
+    sc = new SpiceHtml5.SpiceMainConn({
+      uri, screen_id: 'spice-screen', message_id: 'spice-msg',
+      password: pw || '', onerror: onError, onagent: onAgent,
+    });
+  } catch(e) {
+    setStatus('Verbindungsfehler: ' + e, '#ef4444', true);
+  }
+}
+connect(undefined);
+window.sendCad = () => sc && SpiceHtml5.sendCtrlAltDel(sc);
+
+// ── Keyboard ─────────────────────────────────────────────────────────────────
+// Special keys (arrows, Backspace, Enter…): dispatch synthetic KeyboardEvent to
+// the SPICE canvas — spice-html5 attaches its keydown/keyup listeners there.
+// Printable characters: bypass spice-html5 entirely and build SPICE messages
+// directly using a character→AT-scancode table, so the broken common_scanmap
+// (lowercase 'a'=97→KP_1!) and its alert() bomb are never reached.
+
+const KCODES = {
+  'Backspace':8,'Tab':9,'Enter':13,'Escape':27,'Delete':46,
+  'ArrowLeft':37,'ArrowUp':38,'ArrowRight':39,'ArrowDown':40,
+  'Home':36,'End':35,'PageUp':33,'PageDown':34,
+  'F1':112,'F2':113,'F3':114,'F4':115,'F5':116,'F6':117,
+  'F7':118,'F8':119,'F9':120,'F10':121,'F11':122,'F12':123,
+};
+
+// For special keys the canvas listener calls keycode_to_start_scan(e.keyCode);
+// all KCODES values are in common_scanmap so no alert is triggered.
+window.kp = function(key, keyCode) {
+  const target = getSpiceCanvas() || document;
+  target.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true }));
+  target.dispatchEvent(new KeyboardEvent('keyup',   { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true }));
+};
+
+// Character → [AT scancode, needsShift] — US / international baseline
+const _CHARMAP_BASE = {
+  a:[30,0],b:[48,0],c:[46,0],d:[32,0],e:[18,0],f:[33,0],g:[34,0],h:[35,0],
+  i:[23,0],j:[36,0],k:[37,0],l:[38,0],m:[50,0],n:[49,0],o:[24,0],p:[25,0],
+  q:[16,0],r:[19,0],s:[31,0],t:[20,0],u:[22,0],v:[47,0],w:[17,0],x:[45,0],
+  y:[21,0],z:[44,0],
+  A:[30,1],B:[48,1],C:[46,1],D:[32,1],E:[18,1],F:[33,1],G:[34,1],H:[35,1],
+  I:[23,1],J:[36,1],K:[37,1],L:[38,1],M:[50,1],N:[49,1],O:[24,1],P:[25,1],
+  Q:[16,1],R:[19,1],S:[31,1],T:[20,1],U:[22,1],V:[47,1],W:[17,1],X:[45,1],
+  Y:[21,1],Z:[44,1],
+  '1':[2,0],'2':[3,0],'3':[4,0],'4':[5,0],'5':[6,0],
+  '6':[7,0],'7':[8,0],'8':[9,0],'9':[10,0],'0':[11,0],
+  ' ':[57,0],'\n':[28,0],'\t':[15,0],
+  '-':[12,0],'=':[13,0],'[':[26,0],']':[27,0],'\\':[43,0],
+  ';':[39,0],"'":[40,0],'`':[41,0],',':[51,0],'.':[52,0],'/':[53,0],
+  '!':[2,1],'@':[3,1],'#':[4,1],'$':[5,1],'%':[6,1],'^':[7,1],
+  '&':[8,1],'*':[9,1],'(':[10,1],')':[11,1],'_':[12,1],'+':[13,1],
+  '{':[26,1],'}':[27,1],'|':[43,1],':':[39,1],'"':[40,1],'~':[41,1],
+  '<':[51,1],'>':[52,1],'?':[53,1],
+};
+
+// German QWERTZ overrides (guest keyboard layout = de/at)
+// Key rule: the table answers "which scancode makes the guest produce character X?"
+// QWERTZ: the physical Z key = US-Y position (scan 21) → German VM maps 21→'z'
+//         the physical Y key = US-Z position (scan 44) → German VM maps 44→'y'
+const _CHARMAP_DE = {
+  ..._CHARMAP_BASE,
+  y:[44,0],Y:[44,1],  // German Y key is at scan 44 (US Z position)
+  z:[21,0],Z:[21,1],  // German Z key is at scan 21 (US Y position)
+  'ä':[40,0],'Ä':[40,1],  // KEY_Quote position on German keyboard
+  'ö':[39,0],'Ö':[39,1],  // KEY_SemiColon position
+  'ü':[26,0],'Ü':[26,1],  // KEY_LBrace position
+  'ß':[12,0],
+  '-':[53,0],'_':[53,1],  // German hyphen is at KEY_Slash position
+  '?':[12,1],              // German Shift+ß = ?
+  // German Shift+digits differ from US
+  '"':[3,1],'§':[4,1],'&':[7,1],'/':[8,1],'(':[9,1],')':[10,1],'=':[11,1],
+};
+
+const _CHARMAP = (() => {
+  const k = _serverKeymap;
+  if (k === 'de' || k === 'at') return _CHARMAP_DE;
+  return _CHARMAP_BASE;
+})();
+
+const _KEY_SHIFT = 42; // KEY_ShiftL
+
+function sendSpiceKey(scan, isDown) {
+  if (!sc || !sc.inputs || sc.inputs.state !== 'ready') return;
+  const key = new SpiceMsgcKeyDown();
+  const msg = new SpiceMiniData();
+  if (isDown) {
+    key.code = scan;
+    msg.build_msg(Constants.SPICE_MSGC_INPUTS_KEY_DOWN, key);
+  } else {
+    key.code = scan < 0x100 ? (scan | 0x80) : (scan | 0x8000);
+    msg.build_msg(Constants.SPICE_MSGC_INPUTS_KEY_UP, key);
+  }
+  sc.inputs.send_msg(msg);
+}
+
+function sendSpiceChar(ch) {
+  const entry = _CHARMAP[ch];
+  if (!entry) return; // unknown character — silently skip (no alert)
+  const [scan, needsShift] = entry;
+  if (needsShift) sendSpiceKey(_KEY_SHIFT, true);
+  sendSpiceKey(scan, true);
+  sendSpiceKey(scan, false);
+  if (needsShift) sendSpiceKey(_KEY_SHIFT, false);
+}
+
+kbArea.addEventListener('keydown', (e) => {
+  const kc = KCODES[e.key]; if (kc) { e.preventDefault(); kp(e.key, kc); }
+});
+kbArea.addEventListener('input', () => {
+  const t = kbArea.value; kbArea.value = '';
+  for (const ch of t) sendSpiceChar(ch);
+});
+kbArea.addEventListener('focus', () => btnKb.classList.add('kb-on'));
+kbArea.addEventListener('blur',  () => btnKb.classList.remove('kb-on'));
+window.toggleKb = () => document.activeElement === kbArea ? kbArea.blur() : kbArea.focus();
+
+// ── Touch mode activation ─────────────────────────────────────────────────────
+// Overlay starts with pointer-events: none (desktop mouse reaches canvas
+// directly). On first real touchstart we enable the trackpad layer.
+function activateTouchMode() {
+  if (touchMode) return;
+  touchMode = true;
+  overlay.classList.add('touch-active');
+  initCursor();
+}
+
+// ── Trackpad mouse control (touch only) ──────────────────────────────────────
+let vx = 0, vy = 0;
+
+function getSpiceCanvas() {
+  return document.querySelector('#spice-screen canvas');
+}
+
+function initCursor() {
+  const r = spiceArea.getBoundingClientRect();
+  vx = r.width  / 2;
+  vy = r.height / 2;
+  updateCursorVisual();
+}
+
+function updateCursorVisual() {
+  const r = spiceArea.getBoundingClientRect();
+  vcursorEl.style.left    = (r.left + vx) + 'px';
+  vcursorEl.style.top     = (r.top  + vy) + 'px';
+  vcursorEl.style.display = 'block';
+}
+
+// Scale the SPICE canvas to fit #spice-area when the VM's native resolution
+// is larger than the viewport (common on mobile).
+function applyCanvasScale() {
+  const canvas = getSpiceCanvas();
+  if (!canvas || !canvas.width || !canvas.height) return;
+  const area    = spiceArea.getBoundingClientRect();
+  const scale   = Math.min(area.width / canvas.width, area.height / canvas.height, 1);
+  const scaledW = canvas.width  * scale;
+  const scaledH = canvas.height * scale;
+  canvas.style.position = 'absolute';
+  canvas.style.left     = Math.round((area.width  - scaledW) / 2) + 'px';
+  canvas.style.top      = Math.round((area.height - scaledH) / 2) + 'px';
+  if (scale < 1) {
+    canvas.style.transformOrigin = '0 0';
+    canvas.style.transform       = `scale(${scale})`;
+  } else {
+    canvas.style.transform       = '';
+    canvas.style.transformOrigin = '';
+  }
+}
+
+function getCanvasCoords() {
+  const canvas = getSpiceCanvas();
+  if (!canvas || !sc || !sc.inputs || sc.inputs.state !== 'ready') return null;
+  const areaR   = spiceArea.getBoundingClientRect();
+  const canvasR = canvas.getBoundingClientRect(); // rendered (CSS-scaled) rect
+  // Convert rendered-space position to natural canvas pixel space
+  const scaleX  = canvasR.width  > 0 ? canvas.width  / canvasR.width  : 1;
+  const scaleY  = canvasR.height > 0 ? canvas.height / canvasR.height : 1;
+  const relX    = vx - (canvasR.left - areaR.left);
+  const relY    = vy - (canvasR.top  - areaR.top);
+  return {
+    canvas,
+    offX: Math.max(0, Math.min(canvas.width  - 1, relX * scaleX)),
+    offY: Math.max(0, Math.min(canvas.height - 1, relY * scaleY)),
+  };
+}
+
+function spiceMove() {
+  const r = getCanvasCoords();
+  if (!r) { updateCursorVisual(); return; }
+  const fakeEv = { offsetX: r.offX, offsetY: r.offY };
+  const msg = new SpiceMiniData();
+  if (sc.mouse_mode === Constants.SPICE_MOUSE_MODE_CLIENT) {
+    msg.build_msg(Constants.SPICE_MSGC_INPUTS_MOUSE_POSITION, new SpiceMsgcMousePosition(sc, fakeEv));
+  } else {
+    msg.build_msg(Constants.SPICE_MSGC_INPUTS_MOUSE_MOTION, new SpiceMsgcMouseMotion(sc, fakeEv));
+  }
+  if (sc.inputs.waiting_for_ack < (2 * Constants.SPICE_INPUT_MOTION_ACK_BUNCH)) {
+    sc.inputs.send_msg(msg);
+    sc.inputs.waiting_for_ack++;
+  }
+  updateCursorVisual();
+}
+
+function spiceClick(isRight) {
+  const r = getCanvasCoords();
+  if (!r) return;
+  const fakeEv = { button: isRight ? 2 : 0 };
+  const pressMsg = new SpiceMiniData();
+  pressMsg.build_msg(Constants.SPICE_MSGC_INPUTS_MOUSE_PRESS, new SpiceMsgcMousePress(sc, fakeEv));
+  sc.inputs.send_msg(pressMsg);
+  const releaseMsg = new SpiceMiniData();
+  releaseMsg.build_msg(Constants.SPICE_MSGC_INPUTS_MOUSE_RELEASE, new SpiceMsgcMouseRelease(sc, fakeEv));
+  sc.inputs.send_msg(releaseMsg);
+}
+
+function spiceScroll(dx, dy) {
+  const target = getSpiceCanvas() || spiceArea;
+  if (dy !== 0) target.dispatchEvent(new WheelEvent('wheel', {deltaY: dy > 0 ? 120 : -120, deltaMode: 0, bubbles: true, cancelable: true}));
+  if (dx !== 0) target.dispatchEvent(new WheelEvent('wheel', {deltaX: dx > 0 ? 120 : -120, deltaMode: 0, bubbles: true, cancelable: true}));
+}
+
+// Touch state
+let lastX = 0, lastY = 0;
+let startX = 0, startY = 0, startTime = 0;
+let hadTwo = false, moved = false;
+let twoStartX = 0, twoStartY = 0, twoLastX = 0, twoLastY = 0;
+let scrollAccX = 0, scrollAccY = 0;
+let _tracking = false;
+const SCROLL_PX = 40;
+
+// Capture phase: we intercept touches BEFORE the SPICE canvas sees them.
+// Toolbar/clipboard touches pass through, screen touches are owned by our layer.
+document.addEventListener('touchstart', (e) => {
+  if (!_tracking && e.target.closest('#toolbar,#clip-panel')) return;
+  _tracking = true;
+  activateTouchMode();
+  e.preventDefault();
+  e.stopPropagation();
+  const n = e.touches.length;
+  if (n === 1) {
+    if (!hadTwo) {
+      lastX = startX = e.touches[0].clientX;
+      lastY = startY = e.touches[0].clientY;
+      startTime = performance.now(); moved = false;
+    }
+  } else if (n === 2) {
+    hadTwo = true;
+    twoStartX = twoLastX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    twoStartY = twoLastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    scrollAccX = 0; scrollAccY = 0;
+    startTime = performance.now(); moved = false;
+  }
+}, { passive: false, capture: true });
+
+document.addEventListener('touchmove', (e) => {
+  if (!_tracking) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (hadTwo) {
+    if (e.touches.length >= 2) {
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const dx = cx - twoLastX, dy = cy - twoLastY;
+      twoLastX = cx; twoLastY = cy;
+      if (Math.hypot(cx - twoStartX, cy - twoStartY) > 8) moved = true;
+      if (moved) {
+        scrollAccX += dx; scrollAccY += dy;
+        while (scrollAccY < -SCROLL_PX) { spiceScroll(0, -1); scrollAccY += SCROLL_PX; }
+        while (scrollAccY >  SCROLL_PX) { spiceScroll(0,  1); scrollAccY -= SCROLL_PX; }
+        while (scrollAccX < -SCROLL_PX) { spiceScroll(-1, 0); scrollAccX += SCROLL_PX; }
+        while (scrollAccX >  SCROLL_PX) { spiceScroll( 1, 0); scrollAccX -= SCROLL_PX; }
+      }
+    }
+    return;
+  }
+  if (e.touches.length !== 1) { moved = true; return; }
+
+  const tx = e.touches[0].clientX;
+  const ty = e.touches[0].clientY;
+  const dx = tx - lastX;
+  const dy = ty - lastY;
+  lastX = tx; lastY = ty;
+
+  const r = spiceArea.getBoundingClientRect();
+  vx = Math.max(0, Math.min(r.width  - 1, vx + dx));
+  vy = Math.max(0, Math.min(r.height - 1, vy + dy));
+
+  if (Math.hypot(tx - startX, ty - startY) > 8) moved = true;
+  spiceMove();
+}, { passive: false, capture: true });
+
+document.addEventListener('touchend', (e) => {
+  if (!_tracking) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.touches.length > 0) return;
+  _tracking = false;
+
+  const dt = performance.now() - startTime;
+  if (!moved && dt < 400) {
+    if (hadTwo) {
+      spiceClick(true);
+    } else {
+      const t    = e.changedTouches[0];
+      const dist = Math.hypot(t.clientX - startX, t.clientY - startY);
+      if (dist < 20) spiceClick(false);
+    }
+  }
+  hadTwo = false; moved = false;
+}, { passive: false, capture: true });
+
+document.addEventListener('touchcancel', () => {
+  _tracking = false; hadTwo = false; moved = false;
+}, { passive: false, capture: true });
+
+// ── Canvas scaling setup ──────────────────────────────────────────────────────
+// Watches for the SPICE canvas to appear/resize and scales it to fit the area.
+(function setupCanvasScaling() {
+  const screenEl = document.getElementById('spice-screen');
+  let ro = null;
+  let _connectedShown = false;
+  const mo = new MutationObserver(() => {
+    const canvas = getSpiceCanvas();
+    if (canvas) {
+      applyCanvasScale();
+      if (!_connectedShown) {
+        _connectedShown = true;
+        setStatus('Verbunden ✓');
+      }
+      if (!ro) { ro = new ResizeObserver(applyCanvasScale); ro.observe(canvas); }
+    }
+  });
+  mo.observe(screenEl, { childList: true, subtree: true });
+  window.addEventListener('resize', applyCanvasScale);
+})();
+
+// ── Clipboard ─────────────────────────────────────────────────────────────────
+window.toggleClip = () => {
+  const p = document.getElementById('clip-panel');
+  const open = p.style.display !== 'none';
+  p.style.display = open ? 'none' : 'block';
+  if (!open) setTimeout(() => document.getElementById('clip-box').focus(), 50);
+};
+// Type the clipboard text into the guest via sendSpiceChar (direct SPICE
+// scancodes) — NOT via kp(): synthetic keydown events hit spice-html5's broken
+// common_scanmap where lowercase 'a' (97) maps to KP_1 (garbage in the guest).
+// Paced at 12ms/char so slow guests (Windows login screens etc.) don't drop keys.
+let _clipTimer = null;
+window.clipType = () => {
+  const text = document.getElementById('clip-box').value;
+  if (!text || !sc) return;
+  clearTimeout(_clipTimer);
+  const chars = [...text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')];
+  let i = 0;
+  setStatus('Sende Text…', '#a855f7', true);
+  (function step() {
+    if (i >= chars.length) { setStatus('Text gesendet ✓', '#00e87b'); return; }
+    sendSpiceChar(chars[i++]);
+    _clipTimer = setTimeout(step, 12);
+  })();
+};
+// Read the device's local clipboard into the box (needs HTTPS + user gesture).
+window.clipRead = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) { document.getElementById('clip-box').value = t; setStatus('Zwischenablage geladen ✓', '#00e87b'); }
+    else setStatus('Zwischenablage ist leer', '#fbbf24');
+  } catch {
+    setStatus('Kein Zugriff – Text bitte manuell einfügen', '#ef4444');
+    document.getElementById('clip-box').focus();
+  }
+};
+</script>
+
+<div id="spice-msg" style="display:none"></div>
+</body>
+</html>

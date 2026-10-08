@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0f1216">
+  <title>Vault Approver</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon.svg">
+  <script type="importmap" nonce="__NONCE__">
+    { "imports": { "hash-wasm": "./vendor/hash-wasm.esm.js" } }
+  </script>
+  <style>
+    :root {
+      --bg:#0f1216; --panel:#171b21; --panel2:#1e242c; --line:#2a323c;
+      --fg:#e6ebf1; --muted:#8b97a6; --accent:#4f8cff; --danger:#ff5c6c; --ok:#37d39b;
+    }
+    * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+    body { margin:0; background:var(--bg); color:var(--fg);
+      font:16px/1.5 -apple-system, system-ui, sans-serif;
+      padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+    .wrap { max-width:520px; margin:0 auto; padding:20px 16px; }
+    h1 { font-size:20px; margin:0 0 6px; }
+    .muted { color:var(--muted); }
+    .pad { padding:16px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px; }
+    .field { display:block; margin:14px 0; }
+    .field > span { display:block; font-size:13px; color:var(--muted); margin-bottom:5px; }
+    input { width:100%; padding:13px; background:var(--panel2); border:1px solid var(--line);
+      border-radius:10px; color:var(--fg); font:inherit; }
+    #pair-code { font-family:ui-monospace,monospace; font-size:19px; letter-spacing:2px; text-align:center; }
+    .btn { padding:13px 16px; border:1px solid var(--line); background:var(--panel2);
+      color:var(--fg); border-radius:10px; font:inherit; cursor:pointer; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .btn.danger { background:transparent; border-color:var(--danger); color:var(--danger); }
+    .btn[disabled] { opacity:.5; }
+    .row { display:flex; align-items:center; gap:8px; margin-top:14px; }
+    .row.gap { gap:10px; } .row .btn { flex:1; }
+    .topbar { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+    .topbar .grow { flex:1; }
+    .approval { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+      padding:16px; margin-bottom:12px; }
+    .approval .big { font-weight:700; font-size:17px; margin-bottom:6px; }
+    .approval .match { margin:12px 0 4px; font-size:15px; }
+    .approval .match b { font-size:20px; letter-spacing:2px; }
+    .toast { position:fixed; bottom:calc(16px + env(safe-area-inset-bottom)); left:50%;
+      transform:translateX(-50%); padding:11px 16px; border-radius:10px; background:var(--panel2);
+      border:1px solid var(--line); z-index:20; max-width:90%; }
+    .toast.err { border-color:var(--danger); color:var(--danger); }
+    .toast.ok { border-color:var(--ok); color:var(--ok); }
+    [hidden] { display:none !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- Kopplung -->
+    <section id="screen-pair" class="screen" hidden>
+      <h1>iPhone koppeln</h1>
+      <p class="muted">Öffne im Tresor am Rechner „Gerät koppeln" und gib den angezeigten Code ein.</p>
+      <div class="card">
+        <label class="field"><span>Kopplungs-Code</span><input id="pair-code" placeholder="XXXX-XXXX-XXXX" autocapitalize="characters"></label>
+        <label class="field"><span>Gerätename</span><input id="pair-name" value="iPhone"></label>
+        <button id="pair-btn" class="btn primary" style="width:100%">Koppeln</button>
+      </div>
+    </section>
+
+    <!-- Approver -->
+    <section id="screen-approver" class="screen" hidden>
+      <div class="topbar">
+        <h1 class="grow">🔓 Freigaben</h1>
+        <span class="muted" id="dev-name"></span>
+      </div>
+      <p class="muted">Dieses iPhone gibt Anmeldungen an deinem Tresor frei. Prüfe IP und Abgleich-Code.</p>
+      <div id="approval-list"></div>
+      <div class="row"><button id="unpair-btn" class="btn danger" style="width:100%">Kopplung entfernen</button></div>
+    </section>
+  </div>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="./phone.js"></script>
+</body>
+</html>

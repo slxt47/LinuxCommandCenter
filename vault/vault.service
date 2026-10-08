@@ -1,0 +1,25 @@
+[Unit]
+Description=Zero-Knowledge Vault backend (Passwort-Manager)
+After=network.target
+
+[Service]
+Type=simple
+User=vault
+Group=vault
+WorkingDirectory=/opt/vault-manager
+ExecStart=/usr/bin/python3 /opt/vault-manager/vault_backend.py --db /var/lib/vault/vault.db --port 8099 --host 127.0.0.1
+Restart=on-failure
+RestartSec=2
+# Haertung: unprivilegiert, kein Zugriff aufs restliche System
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vault
+CapabilityBoundingSet=
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

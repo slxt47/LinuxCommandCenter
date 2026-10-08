@@ -1,0 +1,1 @@
+7c80c6fa36aba31aced9da3e37f11677b4349620920cf7985cf74ae777d4c24d  linux-command-center-v2.0.0-2026-08-17.tar.gz

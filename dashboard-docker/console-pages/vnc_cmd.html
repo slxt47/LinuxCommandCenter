@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>VNC Konsole</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; background: #06080d; overflow: hidden; }
+
+#screen {
+  position: fixed; inset: 0; bottom: 56px;
+  background: #000;
+}
+#screen canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/*
+  Touch overlay — sits above the noVNC canvas to intercept touch events.
+  Starts with pointer-events: none so desktop mouse works natively through
+  to the canvas. Activated only after a real touchstart fires.
+*/
+#overlay {
+  position: fixed; inset: 0; bottom: 56px;
+  z-index: 50;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  pointer-events: none;   /* desktop: pass through to canvas */
+}
+#overlay.touch-active {
+  pointer-events: auto;   /* touch: intercept all events */
+}
+
+/* Crosshair cursor dot — touch mode only */
+#cur {
+  position: fixed; width: 20px; height: 20px;
+  pointer-events: none; z-index: 60;
+  display: none;
+  transform: translate(-50%, -50%);
+}
+#cur::before, #cur::after {
+  content: ''; position: absolute;
+  background: rgba(255,255,255,0.9);
+  box-shadow: 0 0 2px rgba(0,0,0,.9);
+}
+#cur::before { left:50%; top:0; width:1.5px; height:100%; transform:translateX(-50%); }
+#cur::after  { top:50%; left:0; height:1.5px; width:100%; transform:translateY(-50%); }
+#cur-dot {
+  position:absolute; width:4px; height:4px;
+  background:#fff; border-radius:50%;
+  top:50%; left:50%; transform:translate(-50%,-50%);
+  box-shadow:0 0 0 1px rgba(0,0,0,.8);
+}
+
+#toolbar {
+  position: fixed; bottom:0; left:0; right:0; height:56px;
+  display:flex; align-items:center; justify-content:flex-start;
+  gap:6px; padding:0 10px;
+  background:rgba(6,8,13,0.95);
+  border-top:1px solid rgba(255,255,255,0.08);
+  backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+  z-index:200; overflow-x:auto; touch-action:pan-x;
+}
+.btn {
+  flex-shrink:0;
+  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+  color:#c8d4e8; border-radius:8px; padding:8px 13px;
+  font-size:13px; font-family:system-ui,sans-serif;
+  cursor:pointer; white-space:nowrap;
+  -webkit-tap-highlight-color:transparent; user-select:none;
+}
+.btn:active  { background:rgba(255,255,255,0.25); }
+.btn.kb-on   { background:rgba(0,232,123,0.2); border-color:#00e87b; color:#00e87b; }
+
+#status {
+  position:fixed; bottom:56px; left:0; right:0; padding:7px 14px;
+  background:rgba(6,8,13,0.88); color:#00e87b;
+  font:12px/1.4 monospace; text-align:center;
+  z-index:201; pointer-events:none; transition:opacity 0.6s;
+}
+#kb {
+  position:fixed; top:-200px; left:0; width:1px; height:1px; opacity:0;
+  font-size:16px; resize:none; border:none; outline:none;
+  background:transparent; color:transparent; caret-color:transparent;
+}
+</style>
+</head>
+<body>
+<div id="status">Verbinde…</div>
+<div id="screen"></div>
+<div id="overlay"></div>
+<div id="cur"><div id="cur-dot"></div></div>
+<textarea id="kb" autocomplete="off" autocorrect="off"
+  autocapitalize="off" spellcheck="false" tabindex="-1" rows="1"></textarea>
+<!-- Clipboard panel -->
+<div id="clip-panel" style="display:none;position:fixed;top:0;left:0;right:0;z-index:210;background:rgba(6,8,13,0.97);border-bottom:1px solid rgba(255,255,255,0.1);padding:10px 12px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);">
+  <textarea id="clip-box" rows="3" placeholder="Text einfügen (long-press → Paste) — erscheint auch wenn Remote etwas kopiert" style="width:100%;background:#0d1320;color:#c8d4e8;border:1px solid #2a3a52;border-radius:6px;padding:8px 10px;font:13px/1.5 monospace;resize:none;outline:none;display:block;box-sizing:border-box;"></textarea>
+  <div style="display:flex;gap:6px;margin-top:8px;">
+    <button onclick="clipRead()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">📥 Laden</button>
+    <button onclick="clipSend()" style="flex:1;background:#00e87b;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Clipboard + Strg+V</button>
+    <button onclick="clipType()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">Eintippen</button>
+    <button onclick="toggleClip()" style="background:rgba(255,255,255,0.05);color:#8b9dc3;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer;">✕</button>
+  </div>
+</div>
+
+<div id="toolbar">
+  <button class="btn" id="btn-kb" onclick="toggleKb()">⌨ Tastatur</button>
+  <button class="btn" onclick="toggleClip()">📋</button>
+  <button class="btn" onclick="rfb&&rfb.sendCtrlAltDel()">Ctrl+Alt+Del</button>
+  <button class="btn" onclick="sk(0xFF0D)">↵</button>
+  <button class="btn" onclick="sk(0xFF1B)">Esc</button>
+  <button class="btn" onclick="sk(0xFF08)">⌫</button>
+  <button class="btn" onclick="sk(0xFF09)">Tab</button>
+  <button class="btn" onclick="sk(0xFF52)">↑</button>
+  <button class="btn" onclick="sk(0xFF54)">↓</button>
+  <button class="btn" onclick="sk(0xFF51)">←</button>
+  <button class="btn" onclick="sk(0xFF53)">→</button>
+</div>
+<script type="module">
+import RFB from './core/rfb.js';
+
+const statusEl = document.getElementById('status');
+const kbEl     = document.getElementById('kb');
+const btnKb    = document.getElementById('btn-kb');
+const screenEl = document.getElementById('screen');
+const overlay  = document.getElementById('overlay');
+const curEl    = document.getElementById('cur');
+let rfb = null;
+let touchMode = false;
+
+// ── Keyboard layout: server keymap (from URL) takes priority over client locale ─
+const _XKB_LANG = {
+  'de':'de-DE','at':'de-AT','ch':'de-CH',
+  'fr':'fr-FR','fr-be':'fr-BE','fr-ch':'fr-CH','be':'fr-BE','ca':'fr-CA',
+  'us':'en-US','en-us':'en-US','gb':'en-GB','en-gb':'en-GB',
+  'es':'es-ES','latam':'es-419',
+  'pt':'pt-PT','pt-br':'pt-BR','br':'pt-BR',
+  'it':'it-IT','nl':'nl-NL','nl-be':'nl-BE','pl':'pl-PL',
+  'ru':'ru-RU','tr':'tr-TR','sv':'sv-SE',
+  'no':'nb-NO','fi':'fi-FI','da':'da-DK',
+  'cs':'cs-CZ','cz':'cs-CZ','sk':'sk-SK','hu':'hu-HU',
+  'ro':'ro-RO','ua':'uk-UA','uk':'uk-UA','bg':'bg-BG',
+  'gr':'el-GR','el':'el-GR','il':'he-IL','he':'he-IL','jp':'ja-JP','ja':'ja-JP',
+  'kr':'ko-KR','ko':'ko-KR','cn':'zh-CN','zh-cn':'zh-CN','tw':'zh-TW','zh-tw':'zh-TW',
+};
+const _serverKeymap = new URLSearchParams(location.search).get('keymap') || '';
+const _xkbLayout    = _serverKeymap || 'us';
+const _kbLang       = _XKB_LANG[_xkbLayout] || navigator.language || 'en';
+kbEl.lang           = _kbLang;
+btnKb.textContent   = `⌨ ${_xkbLayout.toUpperCase()}`;
+
+function setStatus(msg, col='#00e87b', keep=false) {
+  statusEl.textContent = msg; statusEl.style.color = col; statusEl.style.opacity='1';
+  if (!keep) setTimeout(()=>statusEl.style.opacity='0', 3000);
+}
+
+// ── Adaptive quality (RTT-based) ─────────────────────────────────────────────
+let _rtt = 50;  // initial assumption ms
+let _ql  = 6;   // current qualityLevel    (0=worst, 9=best)
+let _cl  = 2;   // current compressionLevel(0=none,  9=max)
+
+async function _measureRtt() {
+  const t0 = performance.now();
+  try { await fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(3000) }); }
+  catch { return; }
+  _rtt = performance.now() - t0;
+}
+
+function _applyQuality() {
+  if (!rfb) return;
+  let tql, tcl;
+  if      (_rtt <  30)  { tql = 9; tcl = 1; }  // very fast — best quality
+  else if (_rtt <  70)  { tql = 7; tcl = 2; }  // fast
+  else if (_rtt < 150)  { tql = 5; tcl = 4; }  // medium
+  else if (_rtt < 300)  { tql = 3; tcl = 6; }  // slow
+  else                   { tql = 1; tcl = 9; }  // very slow — max compression
+
+  // Smooth transitions: only step by 1 per cycle so we don't overreact
+  _ql = _ql < tql ? _ql + 1 : _ql > tql ? _ql - 1 : _ql;
+  _cl = _cl < tcl ? _cl + 1 : _cl > tcl ? _cl - 1 : _cl;
+  rfb.qualityLevel     = _ql;
+  rfb.compressionLevel = _cl;
+}
+
+setInterval(async () => { await _measureRtt(); _applyQuality(); }, 3000);
+
+// ── Connect ──────────────────────────────────────────────────────────────────
+const loc   = window.location;
+const wsUrl = (loc.protocol==='https:'?'wss:':'ws:')+'//'+loc.host+'/websockify';
+rfb = new RFB(screenEl, wsUrl);
+rfb.scaleViewport    = true;
+rfb.resizeSession    = true;
+rfb.background       = '#000000';
+rfb.qualityLevel     = _ql;
+rfb.compressionLevel = _cl;
+rfb.addEventListener('connect', () => {
+  setStatus('Verbunden ✓');
+  window.dispatchEvent(new Event('resize'));
+  if (touchMode) initCursor();
+  if (_serverKeymap) fetch(`/api/setkbmap?layout=${_serverKeymap}`).catch(()=>{});
+  _measureRtt().then(_applyQuality);  // apply immediately on connect
+});
+rfb.addEventListener('disconnect', e  => {
+  setStatus(e.detail.clean?'Verbindung getrennt':'Verbindung verloren – neu laden','#ef4444',true);
+  curEl.style.display='none';
+});
+rfb.addEventListener('credentialsrequired', () =>
+  rfb.sendCredentials({password: prompt('VNC Passwort:')||''}));
+
+// ── Keyboard ─────────────────────────────────────────────────────────────────
+const SKEYS = {Backspace:0xFF08,Delete:0xFFFF,Tab:0xFF09,Enter:0xFF0D,Escape:0xFF1B,
+  ArrowLeft:0xFF51,ArrowUp:0xFF52,ArrowRight:0xFF53,ArrowDown:0xFF54,
+  Home:0xFF50,End:0xFF57,PageUp:0xFF55,PageDown:0xFF56,
+  F1:0xFFBE,F2:0xFFBF,F3:0xFFC0,F4:0xFFC1,F5:0xFFC2,F6:0xFFC3,
+  F7:0xFFC4,F8:0xFFC5,F9:0xFFC6,F10:0xFFC7,F11:0xFFC8,F12:0xFFC9};
+window.sk = k => rfb && (rfb.sendKey(k,null,true), rfb.sendKey(k,null,false));
+kbEl.addEventListener('keydown', e => { const k=SKEYS[e.key]; if(k){e.preventDefault();sk(k);} });
+kbEl.addEventListener('input',   ()=>{ if(!rfb)return; const t=kbEl.value; kbEl.value='';
+  for(const c of t){const k=c.codePointAt(0);sk(k<=0xFF?k:0x01000000+k);} });
+kbEl.addEventListener('focus', ()=>btnKb.classList.add('kb-on'));
+kbEl.addEventListener('blur',  ()=>btnKb.classList.remove('kb-on'));
+window.toggleKb = ()=>document.activeElement===kbEl?kbEl.blur():kbEl.focus();
+
+// ── Touch mode activation ─────────────────────────────────────────────────────
+// The overlay starts with pointer-events: none so the real mouse reaches
+// noVNC's canvas directly. On first touchstart we switch to touch mode.
+function activateTouchMode() {
+  if (touchMode) return;
+  touchMode = true;
+  overlay.classList.add('touch-active');
+  initCursor();
+}
+
+// ── Trackpad mouse control (touch only) ──────────────────────────────────────
+let vx=0, vy=0;
+const getCanvas = () => screenEl.querySelector('canvas');
+
+function initCursor() {
+  const c = getCanvas();
+  vx = c ? c.clientWidth/2  : 400;
+  vy = c ? c.clientHeight/2 : 300;
+  updateCur();
+}
+
+function updateCur() {
+  const c = getCanvas(); if(!c){curEl.style.display='none';return;}
+  const r = c.getBoundingClientRect();
+  curEl.style.left=r.left+vx+'px'; curEl.style.top=r.top+vy+'px'; curEl.style.display='block';
+}
+
+function rfbMouse(mask) {
+  if (!rfb) return;
+  rfb._sendMouse(vx, vy, mask);
+}
+
+function sendClick(right) {
+  rfbMouse(right ? 0x04 : 0x01);
+  rfbMouse(0);
+}
+
+// Touch state
+let lastX=0,lastY=0,startX=0,startY=0,startT=0,hadTwo=false,moved=false;
+let twoStartX=0,twoStartY=0,twoLastX=0,twoLastY=0;
+let scrollAccX=0,scrollAccY=0;
+let _tracking=false;
+const SCROLL_PX=40;
+
+// Use capture phase so we intercept touches BEFORE noVNC's canvas sees them.
+// Toolbar/clipboard touches pass through (no stopPropagation), screen touches
+// are fully owned by our trackpad layer (stopPropagation prevents canvas conflict).
+document.addEventListener('touchstart', e=>{
+  if (!_tracking && e.target.closest('#toolbar,#clip-panel')) return;
+  _tracking=true;
+  activateTouchMode();
+  e.preventDefault();
+  e.stopPropagation();
+  const n=e.touches.length;
+  if(n===1){
+    if(!hadTwo){
+      lastX=startX=e.touches[0].clientX; lastY=startY=e.touches[0].clientY;
+      startT=performance.now(); moved=false;
+    }
+  } else if(n===2){
+    hadTwo=true;
+    twoStartX=twoLastX=(e.touches[0].clientX+e.touches[1].clientX)/2;
+    twoStartY=twoLastY=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    scrollAccX=0; scrollAccY=0;
+    startT=performance.now(); moved=false;
+  }
+},{passive:false,capture:true});
+
+document.addEventListener('touchmove', e=>{
+  if(!_tracking) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if(hadTwo){
+    if(e.touches.length>=2){
+      const cx=(e.touches[0].clientX+e.touches[1].clientX)/2;
+      const cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+      const dx=cx-twoLastX, dy=cy-twoLastY;
+      twoLastX=cx; twoLastY=cy;
+      if(Math.hypot(cx-twoStartX,cy-twoStartY)>8) moved=true;
+      if(moved){
+        scrollAccX+=dx; scrollAccY+=dy;
+        while(scrollAccY<-SCROLL_PX){rfbMouse(0x08);rfbMouse(0);scrollAccY+=SCROLL_PX;}
+        while(scrollAccY>SCROLL_PX) {rfbMouse(0x10);rfbMouse(0);scrollAccY-=SCROLL_PX;}
+        while(scrollAccX<-SCROLL_PX){rfbMouse(0x20);rfbMouse(0);scrollAccX+=SCROLL_PX;}
+        while(scrollAccX>SCROLL_PX) {rfbMouse(0x40);rfbMouse(0);scrollAccX-=SCROLL_PX;}
+      }
+    }
+    return;
+  }
+  if(e.touches.length!==1){moved=true;return;}
+  const tx=e.touches[0].clientX, ty=e.touches[0].clientY;
+  const dx=tx-lastX, dy=ty-lastY;
+  lastX=tx; lastY=ty;
+  const c=getCanvas();
+  vx=Math.max(0,Math.min(c?c.clientWidth-1:799,  vx+dx));
+  vy=Math.max(0,Math.min(c?c.clientHeight-1:599, vy+dy));
+  if(Math.hypot(tx-startX,ty-startY)>8) moved=true;
+  rfbMouse(0); updateCur();
+},{passive:false,capture:true});
+
+document.addEventListener('touchend', e=>{
+  if(!_tracking) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if(e.touches.length>0) return;
+  _tracking=false;
+  const dt=performance.now()-startT;
+  if(!moved && dt<400){
+    if(hadTwo){
+      sendClick(true);
+    } else {
+      const t=e.changedTouches[0];
+      if(Math.hypot(t.clientX-startX,t.clientY-startY)<20) sendClick(false);
+    }
+  }
+  hadTwo=false; moved=false;
+},{passive:false,capture:true});
+
+document.addEventListener('touchcancel',()=>{_tracking=false;hadTwo=false;moved=false;},{passive:false,capture:true});
+
+// ── Clipboard ─────────────────────────────────────────────────────────────────
+// Guest copied something → show it in the panel AND try to push it into the
+// device clipboard (works on HTTPS; fails silently if permission is denied).
+rfb.addEventListener('clipboard', e=>{
+  document.getElementById('clip-box').value=e.detail.text;
+  document.getElementById('clip-panel').style.display='block';
+  navigator.clipboard?.writeText(e.detail.text)
+    .then(()=>setStatus('VM-Text in Zwischenablage kopiert ✓'))
+    .catch(()=>{});
+});
+
+window.toggleClip=()=>{
+  const p=document.getElementById('clip-panel');
+  const open=p.style.display!=='none';
+  p.style.display=open?'none':'block';
+  if(!open) setTimeout(()=>document.getElementById('clip-box').focus(),50);
+};
+window.clipRead=async()=>{
+  try{
+    const t=await navigator.clipboard.readText();
+    if(t){document.getElementById('clip-box').value=t;setStatus('Zwischenablage geladen ✓');}
+    else setStatus('Zwischenablage ist leer','#fbbf24');
+  }catch{
+    setStatus('Kein Zugriff – Text bitte manuell einfügen','#ef4444');
+    document.getElementById('clip-box').focus();
+  }
+};
+window.clipSend=()=>{
+  const text=document.getElementById('clip-box').value;
+  if(!rfb||!text) return;
+  rfb.clipboardPasteFrom(text);
+  rfb.sendKey(0xFFE3,null,true);
+  rfb.sendKey(0x76,null,true);
+  rfb.sendKey(0x76,null,false);
+  rfb.sendKey(0xFFE3,null,false);
+};
+// Type char-by-char: newlines/tabs need their special keysyms (0x0A as keysym
+// is NOT Enter), and 12ms pacing keeps slow guests from dropping keys.
+let _clipTimer=null;
+window.clipType=()=>{
+  const text=document.getElementById('clip-box').value;
+  if(!rfb||!text) return;
+  clearTimeout(_clipTimer);
+  const chars=[...text.replace(/\r\n/g,'\n').replace(/\r/g,'\n')];
+  let i=0;
+  setStatus('Sende Text…','#00e87b',true);
+  (function step(){
+    if(i>=chars.length){setStatus('Text gesendet ✓');return;}
+    const c=chars[i++];
+    let ks;
+    if(c==='\n') ks=0xFF0D;
+    else if(c==='\t') ks=0xFF09;
+    else{const k=c.codePointAt(0);ks=k<=0xFF?k:0x01000000+k;}
+    sk(ks);
+    _clipTimer=setTimeout(step,12);
+  })();
+};
+</script>
+</body>
+</html>
