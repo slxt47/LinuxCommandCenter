@@ -1,0 +1,50 @@
+services:
+  linux-dashboard:
+    build: .
+    image: linux-dashboard:portable
+    container_name: linux-dashboard
+    network_mode: host
+    pid: "host"
+    # Least-Privilege statt `privileged: true`: nur die für nsenter (Host-Mount-
+    # Namespace) nötigen Zusatz-Capabilities. seccomp/apparmor unconfined, damit
+    # setns/mount nicht vom Default-Profil blockiert wird.
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE
+      - DAC_READ_SEARCH
+      - NET_ADMIN
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+    restart: unless-stopped
+    volumes:
+      # App-Code + Frontend live gemountet: Änderungen greifen per `up -d` (Recreate),
+      # kein Image-Rebuild nötig.
+      - ./server.py:/app/server.py:ro
+      - ./dashboard:/app/dashboard:ro
+      - ./static:/app/static:ro
+      - /sys:/sys:ro
+      # libvirt-Socket für VM-Verwaltung. Existiert auf einem System ohne libvirt
+      # nicht — dann wird ein leeres Verzeichnis angelegt und die VM-Funktionen
+      # bleiben inaktiv (Rest des Dashboards läuft normal weiter).
+      - /run/libvirt:/run/libvirt
+      # Host-Benutzer für den Dashboard-Login (PAM/crypt gegen /etc/shadow).
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/shadow:/etc/shadow:ro
+      - /etc/group:/etc/group:ro
+      # Docker-Steuerung (Browser-Sessions etc.)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistente Daten (Sessions o.ä.)
+      - /var/lib/linux-dashboard:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Direkter Zugriff ist per Default nur von localhost / Docker-Bridges
+      # (127./172./10.) erlaubt. Für direkten LAN-/IP-Zugriff auf DIESEM System
+      # (ohne Cloudflare-Tunnel) die erlaubten IP-Präfixe erweitern.
+      #   "*"              = jeder Zugriff erlaubt
+      #   "192.168.,100."  = nur diese Präfixe zusätzlich erlauben
+      - DASHBOARD_ALLOWED_NETS=*
+      # Optionaler statischer Zugriffs-Token (falls im Code unterstützt):
+      # - DASHBOARD_TOKEN=geheim123
+      # Alternativer Port (Default 8420):
+      # - DASH_PORT=8420

@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SSH Terminal</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; background: #0a0a0a; overflow: hidden; }
+
+#terminal-wrap {
+  position: fixed; inset: 0; bottom: 56px;
+  background: #0a0a0a; overflow-y: auto; overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 13px; line-height: 1.45; padding: 8px 10px;
+}
+#terminal-out {
+  white-space: pre-wrap; word-break: break-all;
+  min-height: 100%; color: #c8d4e8;
+}
+
+#toolbar {
+  position: fixed; bottom: 0; left: 0; right: 0; height: 56px;
+  display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: rgba(10,10,10,0.97); border-top: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px); z-index: 200;
+  overflow-x: auto; touch-action: pan-x;
+}
+.btn {
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15);
+  color: #c8d4e8; border-radius: 8px; padding: 8px 13px;
+  font-size: 13px; font-family: system-ui, sans-serif;
+  cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.btn:active { background: rgba(255,255,255,0.25); }
+.btn.kb-on { background: rgba(0,232,123,0.2); border-color: #00e87b; color: #00e87b; }
+
+#status-bar {
+  position: fixed; bottom: 56px; left: 0; right: 0; padding: 5px 14px;
+  background: rgba(10,10,10,0.92); color: #00e87b;
+  font: 11px/1.4 monospace; text-align: center;
+  z-index: 201; pointer-events: none; transition: opacity 0.6s;
+}
+
+#kb {
+  position: fixed; top: -200px; left: 0; width: 1px; height: 1px; opacity: 0;
+  font-size: 16px; resize: none; border: none; outline: none;
+  background: transparent; color: transparent; caret-color: transparent;
+}
+</style>
+</head>
+<body>
+
+<div id="status-bar">Verbinde…</div>
+<div id="terminal-wrap"><div id="terminal-out"></div></div>
+<textarea id="kb" rows="1" autocomplete="off" autocorrect="off"
+  autocapitalize="off" spellcheck="false" tabindex="-1"></textarea>
+
+<div id="toolbar">
+  <button class="btn" id="btn-kb" onclick="toggleKb()">⌨ Tastatur</button>
+  <button class="btn" onclick="send('\x03')">Ctrl+C</button>
+  <button class="btn" onclick="send('\x04')">Ctrl+D</button>
+  <button class="btn" onclick="send('\x1a')">Ctrl+Z</button>
+  <button class="btn" onclick="send('\x13')">Ctrl+S</button>
+  <button class="btn" onclick="send('\x18')">Ctrl+X</button>
+  <button class="btn" onclick="send('\x1b[3;7~')">Ctrl+Alt+Del</button>
+  <button class="btn" onclick="send('\r')">↵</button>
+  <button class="btn" onclick="send('\x1b')">Esc</button>
+  <button class="btn" onclick="send('\x7f')">⌫</button>
+  <button class="btn" onclick="send('\t')">Tab</button>
+  <button class="btn" onclick="send('\x1b[A')">↑</button>
+  <button class="btn" onclick="send('\x1b[B')">↓</button>
+  <button class="btn" onclick="send('\x1b[D')">←</button>
+  <button class="btn" onclick="send('\x1b[C')">→</button>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const id = params.get('id') || '';
+const statusEl = document.getElementById('status-bar');
+const outEl    = document.getElementById('terminal-out');
+const kbEl     = document.getElementById('kb');
+const btnKb    = document.getElementById('btn-kb');
+const wrap     = document.getElementById('terminal-wrap');
+let ws = null;
+
+function setStatus(msg, col = '#00e87b', keep = false) {
+  statusEl.textContent = msg;
+  statusEl.style.color = col;
+  statusEl.style.opacity = '1';
+  if (!keep) setTimeout(() => statusEl.style.opacity = '0', 3000);
+}
+
+// ── ANSI rendering ────────────────────────────────────────────────────────────
+// Buffer: accumulate raw terminal bytes as string, re-render on each chunk.
+// CR handling: split by \n, within each line take the segment after the last \r.
+
+let rawBuf = '';
+const MAX_BUF = 200000;
+
+const FG = ['#1a1a2e','#ef4444','#4ade80','#fcd34d','#60a5fa','#c084fc','#67e8f9','#e2e8f0'];
+const FG_BRIGHT = ['#4a5e80','#f87171','#86efac','#fde68a','#93c5fd','#d8b4fe','#a5f3fc','#f8fafc'];
+const BG = ['#000000','#7f1d1d','#14532d','#78350f','#1e3a5f','#581c87','#164e63','#374151'];
+
+function ansiToHtml(text) {
+  // 1. Normalize CRLF
+  text = text.replace(/\r\n/g, '\n');
+
+  // 2. Strip non-color escape sequences
+  text = text
+    .replace(/\x1b\[2J(?:\x1b\[H)?/g, '\x00CLEAR\x00')
+    .replace(/\x1b\[\?[0-9;]*[hl]/g, '')
+    .replace(/\x1b\[[0-9;]*[ABCDEFGHIJKLMNOPQRSTUVWXYZ@`]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()][AB012]/g, '').replace(/\x1b[=>]/g, '').replace(/\x07/g, '');
+
+  // 3. Handle backspace (0x08): iteratively remove char+BS pairs
+  //    Use \x08 explicitly — \b outside [...] is a word boundary, NOT a backspace byte
+  let _prev;
+  do { _prev = text; text = text.replace(/[^\x08\n]\x08/g, ''); } while (text !== _prev);
+  text = text.replace(/\x08/g, '');
+
+  // 4. Handle standalone CR overwrite
+  text = text.split('\n').map(line => {
+    const parts = line.split('\r');
+    return parts[parts.length - 1];
+  }).join('\n');
+
+  // 5. Trim to last clear-screen
+  const clearIdx = text.lastIndexOf('\x00CLEAR\x00');
+  if (clearIdx >= 0) {
+    text = text.slice(clearIdx + '\x00CLEAR\x00'.length);
+  }
+
+  // Escape HTML
+  text = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Convert SGR sequences to <span> tags
+  let html = '';
+  let style = {};
+  const parts = text.split(/(\x1b\[[0-9;]*m)/);
+  for (const part of parts) {
+    const m = part.match(/^\x1b\[([0-9;]*)m$/);
+    if (m) {
+      const codes = m[1] ? m[1].split(';').map(Number) : [0];
+      let i = 0;
+      while (i < codes.length) {
+        const n = codes[i];
+        if (n === 0) style = {};
+        else if (n === 1) style.bold = true;
+        else if (n === 2) style.dim = true;
+        else if (n === 3) style.italic = true;
+        else if (n === 4) style.underline = true;
+        else if (n === 22) { delete style.bold; delete style.dim; }
+        else if (n === 23) delete style.italic;
+        else if (n === 24) delete style.underline;
+        else if (n >= 30 && n <= 37) style.fg = FG[n-30];
+        else if (n === 39) delete style.fg;
+        else if (n >= 40 && n <= 47) style.bg = BG[n-40];
+        else if (n === 49) delete style.bg;
+        else if (n >= 90 && n <= 97) style.fg = FG_BRIGHT[n-90];
+        else if (n >= 100 && n <= 107) { delete style.bg; } // bright bg: ignore
+        else if (n === 38 && codes[i+1] === 5 && i+2 < codes.length) {
+          // 256-color fg: map basic 16 colors, ignore rest
+          const ci = codes[i+2];
+          if (ci < 8) style.fg = FG[ci];
+          else if (ci < 16) style.fg = FG_BRIGHT[ci-8];
+          i += 2;
+        } else if (n === 48 && codes[i+1] === 5 && i+2 < codes.length) {
+          i += 2; // 256-color bg: ignore
+        } else if (n === 38 && codes[i+1] === 2 && i+4 < codes.length) {
+          style.fg = `rgb(${codes[i+2]},${codes[i+3]},${codes[i+4]})`; i += 4;
+        } else if (n === 48 && codes[i+1] === 2 && i+4 < codes.length) {
+          i += 4; // rgb bg: ignore
+        }
+        i++;
+      }
+    } else if (part) {
+      let css = '';
+      if (style.fg) css += `color:${style.fg};`;
+      if (style.bg) css += `background:${style.bg};`;
+      if (style.bold) css += 'font-weight:700;';
+      if (style.italic) css += 'font-style:italic;';
+      if (style.underline) css += 'text-decoration:underline;';
+      if (style.dim) css += 'opacity:0.6;';
+      html += css ? `<span style="${css}">${part}</span>` : part;
+    }
+  }
+  return html;
+}
+
+function render() {
+  outEl.innerHTML = ansiToHtml(rawBuf);
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+const dec = new TextDecoder('utf-8', { fatal: false });
+
+function onData(data) {
+  const text = data instanceof ArrayBuffer ? dec.decode(data) : data;
+  rawBuf += text;
+  if (rawBuf.length > MAX_BUF) {
+    const cut = rawBuf.indexOf('\n', rawBuf.length - MAX_BUF / 2);
+    rawBuf = cut >= 0 ? rawBuf.slice(cut + 1) : rawBuf.slice(-MAX_BUF / 2);
+  }
+  render();
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connect() {
+  if (!id) { setStatus('Keine ID angegeben', '#ef4444', true); return; }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/api/ext/ssh/ws/${id}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen  = () => setStatus('Verbunden ✓');
+  ws.onmessage = e => onData(e.data);
+  ws.onclose = () => {
+    setStatus('Verbindung getrennt', '#ef4444', true);
+    onData('\r\n\x1b[31m[Verbindung getrennt]\x1b[0m\r\n');
+  };
+  ws.onerror = () => setStatus('Verbindungsfehler', '#ef4444', true);
+}
+
+function send(data) {
+  if (ws && ws.readyState === 1) {
+    ws.send(typeof data === 'string' ? new TextEncoder().encode(data) : data);
+  }
+}
+
+// ── Keyboard ─────────────────────────────────────────────────────────────────
+kbEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter')     { e.preventDefault(); send('\r'); return; }
+  if (e.key === 'Backspace') { e.preventDefault(); send('\x7f'); return; }
+  if (e.key === 'Tab')       { e.preventDefault(); send('\t'); return; }
+  if (e.key === 'Escape')    { e.preventDefault(); send('\x1b'); return; }
+  if (e.key === 'ArrowUp')   { e.preventDefault(); send('\x1b[A'); return; }
+  if (e.key === 'ArrowDown') { e.preventDefault(); send('\x1b[B'); return; }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); send('\x1b[D'); return; }
+  if (e.key === 'ArrowRight'){ e.preventDefault(); send('\x1b[C'); return; }
+  if (e.ctrlKey && e.key.length === 1) {
+    e.preventDefault();
+    send(String.fromCharCode(e.key.toLowerCase().charCodeAt(0) - 96));
+    return;
+  }
+});
+kbEl.addEventListener('input', () => {
+  const t = kbEl.value; kbEl.value = '';
+  if (t) send(t);
+});
+kbEl.addEventListener('focus', () => btnKb.classList.add('kb-on'));
+kbEl.addEventListener('blur',  () => btnKb.classList.remove('kb-on'));
+window.toggleKb = () => document.activeElement === kbEl ? kbEl.blur() : kbEl.focus();
+
+// Click on terminal text = focus keyboard
+wrap.addEventListener('click', () => kbEl.focus());
+
+connect();
+</script>
+</body>
+</html>
