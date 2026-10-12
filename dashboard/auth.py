@@ -9,7 +9,10 @@ import time
 import threading
 import socket
 import secrets
-import crypt
+try:
+    import crypt  # entfällt ab Python 3.13 (PEP 594); dann nur noch Host-Fallback
+except ImportError:  # pragma: no cover
+    crypt = None
 import hashlib
 import base64
 import struct
@@ -76,6 +79,13 @@ class SessionManager:
         with self._lock:
             self._sessions.pop(token, None)
 
+    def invalidate_user(self, username):
+        """Alle Sitzungen eines Benutzers beenden (z. B. wenn er gelöscht wird)."""
+        with self._lock:
+            for tok in [t for t, s in self._sessions.items()
+                        if s.get("username") == username]:
+                self._sessions.pop(tok, None)
+
 
 _session_mgr = SessionManager()
 
@@ -125,6 +135,115 @@ _LOGIN_MAX      = 8           # erlaubte Versuche pro Fenster
 _LOGIN_WINDOW   = 60          # Sekunden
 
 
+# ─── Echte Client-IP + Auth-Protokoll (fail2ban) ─────────────────────────────
+#
+# Haengt das Dashboard hinter einem Tunnel (cloudflared im Docker-Netz) oder
+# einem Reverse-Proxy (nginx auf 127.0.0.1), ist `self.client_address[0]`
+# IMMER die Proxy-Adresse, nie die des Besuchers. Das hatte zwei Folgen:
+#   * Der Login-Ratelimiter zaehlte alle Besucher in einen Topf — ein einziger
+#     Angreifer konnte damit jeden anderen aussperren.
+#   * fail2ban haette nur die Container-IP zu sehen bekommen und nichts Echtes
+#     sperren koennen.
+#
+# Die echte Adresse steht in CF-Connecting-IP (setzt Cloudflare) bzw. in
+# X-Real-IP/X-Forwarded-For (setzt nginx). Diese Header werden NUR ausgewertet,
+# wenn die TCP-Gegenstelle selbst eine private Adresse ist, also einer unserer
+# Proxys. Sonst koennte jeder, der Port 8420 direkt erreicht, per Header eine
+# beliebige fremde IP sperren lassen (oder die eigene Sperre umgehen).
+
+import ipaddress as _ipaddress
+import re as _re
+
+_AUTH_LOG = os.environ.get("DASHBOARD_AUTH_LOG", "/data/auth.log")
+_auth_log_lock = threading.Lock()
+
+
+# DASHBOARD_TRUSTED_PROXIES (Komma-getrennte Netze): nur von diesen Gegenstellen
+# werden Proxy-Header geglaubt. Leer = loopback + alle privaten Netze (passt fuer
+# Tunnel-Container im Docker-Netz). Auf einem Server OHNE Tunnel, auf den LAN-
+# Clients direkt zugreifen, MUSS das enger sein (z. B. "127.0.0.1/32,::1/128"),
+# sonst kann ein LAN-Client per X-Real-IP eine fremde IP sperren lassen.
+_TRUSTED_PROXIES = []
+for _n in os.environ.get("DASHBOARD_TRUSTED_PROXIES", "").split(","):
+    _n = _n.strip()
+    if _n:
+        try:
+            _TRUSTED_PROXIES.append(_ipaddress.ip_network(_n, strict=False))
+        except ValueError:
+            print(f"[auth] DASHBOARD_TRUSTED_PROXIES: ungueltiges Netz {_n!r}", flush=True)
+
+
+def _is_trusted_proxy(addr):
+    """True, wenn `addr` einer unserer Reverse-Proxys sein kann."""
+    try:
+        ip = _ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if _TRUSTED_PROXIES:
+        return any(ip.version == n.version and ip in n for n in _TRUSTED_PROXIES)
+    return ip.is_loopback or ip.is_private
+
+
+def client_ip(handler):
+    """Die echte Adresse des Besuchers — Proxy-Header nur von Proxys geglaubt."""
+    peer = handler.client_address[0]
+    if not _is_trusted_proxy(peer):
+        return peer
+    hdrs = handler.headers
+    for name in ("CF-Connecting-IP", "X-Real-IP"):
+        val = (hdrs.get(name) or "").strip()
+        if val:
+            return val
+    # X-Forwarded-For ist eine Kette "client, proxy1, proxy2" — der erste
+    # Eintrag ist der urspruengliche Absender.
+    xff = (hdrs.get("X-Forwarded-For") or "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return peer
+
+
+def log_auth_event(event, username, ip, detail=""):
+    """Eine Zeile ins Auth-Protokoll schreiben, aus dem fail2ban liest.
+
+    Festes, gut greifbares Format — der Filter in
+    /etc/fail2ban/filter.d/dashboard-auth.conf haengt daran:
+
+        2026-09-01 05:12:33 dashboard AUTHFAIL user=<name> ip=<addr> detail=<...>
+    """
+    # Der Benutzername kommt ungefiltert aus dem Formular. Alles ausser
+    # [A-Za-z0-9._@+-] wird zu "_": Ein "\n" im Namen hat sonst die Zeile
+    # zerlegt - der Rest (mit der echten IP) verlor seinen Kopf und fiel aus
+    # dem fail2ban-Muster, und der Angreifer konnte eine komplette zweite
+    # "AUTHFAIL ... ip=<fremde IP>"-Zeile einschleusen (Audit 02.09.2026).
+    # Ein Tab haette dasselbe erreicht, weil das Muster ein Leerzeichen vor
+    # "ip=" verlangt.
+    safe_user = _re.sub(r"[^A-Za-z0-9._@+-]", "_", username or "-")[:64] or "-"
+    # Die IP stammt zwar von einem vertrauten Proxy, aber "vertraut" heisst
+    # nicht "wohlgeformt": nur echte Adressen kommen ins Log, alles andere
+    # wird als "-" geschrieben und faellt so aus dem Muster, statt es zu
+    # verbiegen.
+    try:
+        safe_ip = str(_ipaddress.ip_address((ip or "").strip()))
+    except ValueError:
+        safe_ip = "-"
+    line = "%s dashboard %s user=%s ip=%s detail=%s\n" % (
+        time.strftime("%Y-%m-%d %H:%M:%S"),
+        event,
+        safe_user,
+        safe_ip,
+        _re.sub(r"[^A-Za-z0-9._:/ -]", "_", detail or "-")[:120],
+    )
+    try:
+        with _auth_log_lock:
+            with open(_AUTH_LOG, "a", encoding="utf-8") as fh:
+                fh.write(line)
+    except Exception:
+        # Protokollieren darf den Login niemals scheitern lassen.
+        pass
+
+
 def _login_rate_limited(ip):
     """True, wenn diese IP das Login-Limit im Zeitfenster überschritten hat."""
     now = time.time()
@@ -162,73 +281,188 @@ def _action_rate_limited(bucket, ip, max_hits=30, window=60):
         return len(hits) > max_hits
 
 
-def authenticate_user(username, password):
-    """Verify username/password against host /etc/shadow (mounted read-only).
-    Fällt bei nicht gefundenem User auf die HOST-Live-Datei (via nsenter/getent)
-    zurück, damit im Dashboard neu angelegte Benutzer sofort funktionieren
-    (der Bind-Mount der Datei zeigt sonst auf den alten Inode)."""
-    stored_hash = None
-    readable = False
+def _host_shadow_hash(username):
+    """Liest den Passwort-Hash LIVE vom Host (nsenter/getent).
+
+    Muss VOR der gemounteten /etc/shadow abgefragt werden: der Bind-Mount der
+    einzelnen Datei hängt nach useradd/chpasswd/userdel auf dem alten Inode
+    fest, d. h. der Container sieht bis zum Neustart den Stand von damals.
+
+    Rückgabe (hash, authoritative):
+      (hash, True)  – Hash vom Host gelesen
+      (None, True)  – Host kennt den Benutzer sicher nicht (auch nicht in passwd)
+      (None, False) – Host-Abfrage nicht möglich → Aufrufer nimmt den Mount
+    """
+    try:
+        r = subprocess.run(_ns(["getent", "shadow", username]),
+                           capture_output=True, text=True, timeout=6)
+        if r.returncode == 0 and ":" in r.stdout:
+            return r.stdout.strip().split(":")[1], True
+        # Kein Shadow-Eintrag: nur dann autoritativ „gibt es nicht", wenn der
+        # Host den Benutzer auch in passwd nicht kennt (getent: 2 = not found).
+        # Sonst könnte ein kaputter nsenter-Aufruf alle Logins aussperren.
+        p = subprocess.run(_ns(["getent", "passwd", username]),
+                           capture_output=True, text=True, timeout=6)
+        if p.returncode == 2 and not p.stdout.strip():
+            return None, True
+    except Exception:
+        pass
+    return None, False
+
+
+def _mounted_shadow_hash(username):
+    """Fallback: Hash aus der gemounteten /etc/shadow. (hash, readable)."""
     try:
         with open("/etc/shadow", "r") as f:
-            readable = True
             for line in f:
                 parts = line.strip().split(":")
                 if len(parts) >= 2 and parts[0] == username:
-                    stored_hash = parts[1]
-                    break
-    except (PermissionError, FileNotFoundError):
-        readable = False
-    if stored_hash is None:
-        try:
-            r = subprocess.run(_ns(["getent", "shadow", username]),
-                               capture_output=True, text=True, timeout=6)
-            if r.returncode == 0 and ":" in r.stdout:
-                stored_hash = r.stdout.strip().split(":")[1]
-                readable = True
-        except Exception:
-            pass
+                    return parts[1], True
+        return None, True
+    except OSError:
+        return None, False
+
+
+def authenticate_user(username, password):
+    """Verify username/password against the host's shadow database.
+
+    Quelle ist IMMER zuerst der laufende Host (nsenter/getent), damit im
+    Dashboard angelegte/geänderte/gelöschte Benutzer sofort wirken. Die
+    gemountete /etc/shadow dient nur noch als Notfall-Fallback, falls der
+    Host-Namespace nicht erreichbar ist."""
+    stored_hash, authoritative = _host_shadow_hash(username)
+    readable = authoritative
+    if not authoritative:
+        stored_hash, readable = _mounted_shadow_hash(username)
     if stored_hash is None:
         return False if readable else None
     # Locked / disabled / passwordless accounts ('!' prefix = locked)
     if not stored_hash or stored_hash.startswith('!') or stored_hash in ("*", "x"):
         return False
-    # Fast path: Python-crypt für bekannte Algorithmen ($1$/$5$/$6$/$2b$ …)
-    try:
-        result = crypt.crypt(password, stored_hash)
-        if not result.startswith('*'):
-            return result == stored_hash
-    except Exception:
-        pass
+    # Fast path: Python-crypt für bekannte Algorithmen ($1$/$5$/$6$/$2b$ …).
+    # Fehlt das Modul (Python ≥ 3.13), geht es direkt zum Host-Fallback.
+    if crypt is not None:
+        try:
+            result = crypt.crypt(password, stored_hash)
+            if result and not result.startswith('*'):
+                return result == stored_hash
+        except Exception:
+            pass
     # Fallback: Host-Python/libcrypt (yescrypt $y$ etc.)
     return _verify_hash_on_host(password, stored_hash)
 
 
-def is_sudo_user(username):
-    """Return True if username is in the sudo or wheel group.
-    Prüft die gemountete /etc/group und fällt auf `id -nG` am Host zurück
-    (damit frisch gesetzte Admin-Rechte sofort greifen)."""
+# ─── Rollenmodell ────────────────────────────────────────────────────────────
+# superadmin  root + jokergame (Env DASH_SUPERADMINS überschreibt): alles.
+#             Das sind die einzigen Konten, die auf dem Host in `sudo` stehen.
+# admin       Mitglied der Gruppe ADMIN_GROUP (Standard `dashadmin`, Env
+#             DASH_ADMIN_GROUP): eigene VMs + Browser-Sessions + Verbindungen,
+#             KEIN Docker, KEIN Host-Terminal, keine Benutzer-/Dienste-/
+#             Prozess-/Update-/Netz-/Storage-Verwaltung.
+#             Bis 19.09.2026 war das die echte sudo-Gruppe des Hosts — damit
+#             hatte jeder Dashboard-Admin latent Root (Audit-Fund L1). Die
+#             Rolle ist jetzt ein reiner Marker ohne Systemrechte.
+# user        nur Browser-Sessions + eigene externe Verbindungen.
+SUPERADMINS = frozenset(
+    u.strip() for u in os.environ.get("DASH_SUPERADMINS", "root,jokergame").split(",")
+    if u.strip()
+)
+ADMIN_GROUP = os.environ.get("DASH_ADMIN_GROUP", "dashadmin").strip() or "dashadmin"
+ROLE_RANK = {"user": 0, "admin": 1, "superadmin": 2}
+
+
+def resolve_role(username):
+    """Rolle eines Host-Benutzers bestimmen (wird beim Login in die Session geschrieben)."""
+    if username in SUPERADMINS:
+        return "superadmin"
+    return "admin" if is_sudo_user(username) else "user"
+
+
+_ROLE_TTL = 15  # Sekunden
+_role_cache = {}
+_role_lock = threading.Lock()
+
+
+def live_role(username, fallback=None):
+    """Rolle bei jedem Request neu vom Host bestimmen (kurz gecacht).
+
+    Die beim Login in die Sitzung geschriebene Rolle friert den damaligen Stand
+    ein: Wer erst NACH dem Anmelden in die sudo-Gruppe kommt, bleibt bis zum
+    nächsten Login "user" und sieht z. B. den VM-Reiter nicht — umgekehrt
+    behält ein entzogener Admin seine Rechte bis zu 24 h weiter. Der kurze
+    Cache hält die nsenter-Abfrage pro Benutzer auf max. eine alle 15 s.
+    """
+    if not username:
+        return fallback
+    if username in SUPERADMINS:
+        return "superadmin"
+    now = time.time()
+    with _role_lock:
+        hit = _role_cache.get(username)
+        if hit and hit[1] > now:
+            return hit[0]
+    role = "admin" if is_sudo_user(username) else "user"
+    with _role_lock:
+        _role_cache[username] = (role, now + _ROLE_TTL)
+    return role
+
+
+def invalidate_role_cache(username=None):
+    """Nach Rechteänderungen im Dashboard sofort neu auflösen."""
+    with _role_lock:
+        if username is None:
+            _role_cache.clear()
+        else:
+            _role_cache.pop(username, None)
+
+
+def role_at_least(role, minimum):
+    return ROLE_RANK.get(role or "", -1) >= ROLE_RANK.get(minimum, 99)
+
+
+def is_admin_user(username):
+    """True, wenn der Benutzer in der Dashboard-Admin-Gruppe (ADMIN_GROUP) steht.
+
+    Mitgliedschaft in `sudo`/`wheel` zählt bewusst NICHT mehr — die Rolle ist
+    seit 19.09.2026 von den Systemrechten entkoppelt.
+    Fragt zuerst den Host live ab (`id -nG` via nsenter) — die gemountete
+    /etc/group ist wie /etc/shadow nach jeder Änderung veraltet und würde
+    sonst z. B. entzogene Admin-Rechte bis zum Container-Neustart behalten.
+    Der Datei-Fallback greift nur, wenn der Host nicht erreichbar ist."""
     if username == "root":
         return True
-    try:
-        with open("/etc/group", "r") as f:
-            for line in f:
-                parts = line.strip().split(":")
-                if len(parts) >= 4 and parts[0] in ("sudo", "wheel"):
-                    members = [m.strip() for m in parts[3].split(",") if m.strip()]
-                    if username in members:
-                        return True
-    except (PermissionError, FileNotFoundError):
-        pass
     try:
         r = subprocess.run(_ns(["id", "-nG", username]),
                            capture_output=True, text=True, timeout=6)
         if r.returncode == 0:
-            groups = r.stdout.split()
-            return "sudo" in groups or "wheel" in groups
+            return ADMIN_GROUP in r.stdout.split()
     except Exception:
         pass
+    # Fallback ohne Subprozess: /proc/1/root zeigt auf das Host-Root, die Datei
+    # ist dort immer aktuell. Der Bind-Mount /etc/group zeigt dagegen nach jedem
+    # usermod auf den alten Inode (usermod schreibt neu + rename) und kennt
+    # frisch angelegte Benutzer nicht — nur letzte Notfallquelle.
+    for group_file in ("/proc/1/root/etc/group", "/etc/group"):
+        try:
+            with open(group_file, "r") as f:
+                for line in f:
+                    parts = line.strip().split(":")
+                    if len(parts) >= 4 and parts[0] == ADMIN_GROUP:
+                        members = [m.strip() for m in parts[3].split(",") if m.strip()]
+                        if username in members:
+                            return True
+        except OSError:
+            continue
     return False
+
+
+# Alter Name, wird in handler.py importiert
+is_sudo_user = is_admin_user
+
+
+def _ensure_admin_group():
+    """Gruppe ADMIN_GROUP auf dem Host anlegen, falls sie fehlt (idempotent)."""
+    subprocess.run(_ns(["groupadd", "-f", ADMIN_GROUP]), capture_output=True, timeout=10)
 
 
 # ─── Host-Benutzerverwaltung (useradd/usermod/userdel via nsenter) ───────────
@@ -241,7 +475,7 @@ def list_users():
     """Menschliche Host-Benutzer (root + UID 1000–64999) mit Admin-/Sperr-Status."""
     try:
         admins = set()
-        rg = subprocess.run(_ns(["getent", "group", "sudo", "wheel"]),
+        rg = subprocess.run(_ns(["getent", "group", ADMIN_GROUP]),
                             capture_output=True, text=True, timeout=8)
         for line in rg.stdout.splitlines():
             p = line.split(":")
@@ -269,7 +503,7 @@ def list_users():
                 continue
             users.append({
                 "username": name, "uid": uidn, "shell": shell,
-                "is_admin": name == "root" or name in admins,
+                "is_admin": name in SUPERADMINS or name in admins,
                 "locked": locked.get(name, False),
                 "system": uidn == 0,
             })
@@ -296,7 +530,8 @@ def create_user(username, password, is_admin=False, shell="/bin/bash"):
     if cp.returncode != 0:
         return {"error": "Benutzer angelegt, aber Passwort setzen fehlgeschlagen: " + cp.stderr.strip()}
     if is_admin:
-        subprocess.run(_ns(["usermod", "-aG", "sudo", username]), capture_output=True, timeout=10)
+        _ensure_admin_group()
+        subprocess.run(_ns(["usermod", "-aG", ADMIN_GROUP, username]), capture_output=True, timeout=10)
     return {"success": True}
 
 
@@ -314,10 +549,10 @@ def update_user(username, password=None, is_admin=None):
             return {"error": cp.stderr.strip() or "Passwort setzen fehlgeschlagen"}
     if is_admin is not None:
         if is_admin:
-            subprocess.run(_ns(["usermod", "-aG", "sudo", username]), capture_output=True, timeout=10)
+            _ensure_admin_group()
+            subprocess.run(_ns(["usermod", "-aG", ADMIN_GROUP, username]), capture_output=True, timeout=10)
         else:
-            for grp in ("sudo", "wheel"):
-                subprocess.run(_ns(["gpasswd", "-d", username, grp]), capture_output=True, timeout=10)
+            subprocess.run(_ns(["gpasswd", "-d", username, ADMIN_GROUP]), capture_output=True, timeout=10)
     return {"success": True}
 
 
@@ -339,6 +574,8 @@ def delete_user(username, remove_home=True):
     d = subprocess.run(_ns(args), capture_output=True, text=True, timeout=25)
     if d.returncode != 0 and "not found" not in (d.stderr or "").lower():
         return {"error": d.stderr.strip() or "userdel fehlgeschlagen"}
+    # Offene Sitzungen des gelöschten Benutzers sofort beenden.
+    _session_mgr.invalidate_user(username)
     return {"success": True}
 
 

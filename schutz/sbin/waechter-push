@@ -1,0 +1,55 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# waechter-push -- ntfy-Push fuer alle Teile des Server-Waechters.
+#
+# Aufruf:  waechter-push [-t tags] [-c klick-url] <titel> <prioritaet> <text>
+#
+# Zugangsdaten aus /etc/linux-dashboard/schutz.conf (NTFY_URL, NTFY_TOPIC,
+# NTFY_TOKEN, optional NTFY_URL_LOKAL). Ohne NTFY_URL passiert nichts.
+#
+# - Kehrt IMMER mit 0 zurueck: fail2ban darf einen Ban nie als gescheitert
+#   sehen, nur weil ntfy nicht erreichbar ist.
+# - Der Token geht per stdin-Header an curl, nicht ueber die Kommandozeile
+#   (sonst per ps fuer jeden Benutzer lesbar).
+# - Steuerzeichen fliegen aus Titel/Text: Teile davon koennen aus Logs stammen
+#   (Header-Injection ueber einen Benutzernamen).
+# - NTFY_URL_LOKAL wird zuerst probiert: haengt ntfy hinter demselben Tunnel,
+#   der gerade ausgefallen ist, kaeme die Meldung sonst nie an.
+# ---------------------------------------------------------------------------
+CONF=/etc/linux-dashboard/schutz.conf
+tags="shield"; click=""
+while getopts "t:c:" o; do
+    case "$o" in t) tags=$OPTARG ;; c) click=$OPTARG ;; *) ;; esac
+done
+shift $((OPTIND - 1))
+
+NTFY_URL=""; NTFY_TOPIC=""; NTFY_TOKEN=""; NTFY_URL_LOKAL=""
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+[ -n "$NTFY_URL" ] && [ -n "$NTFY_TOPIC" ] || exit 0
+
+clean() { printf '%s' "$1" | tr -d '\000-\010\013-\037\177' | tr '\n\r\t' '   '; }
+titel=$(clean "${1:-Server-Waechter}" | cut -c1-200)
+prio=${2:-default}
+case "$prio" in min|low|default|high|urgent|max|1|2|3|4|5) ;; *) prio=default ;; esac
+text=$(clean "${3:-}" | cut -c1-1500)
+tags=$(clean "$tags" | tr -cd 'A-Za-z0-9_,-')
+click=$(clean "$click")
+case "$click" in http://*|https://*) ;; *) click="" ;; esac
+
+senden() {
+    local basis=$1
+    local args=(--max-time 8 -s -o /dev/null -w '%{http_code}' -H @-
+                -H "Title: $titel" -H "Priority: $prio" -H "Tags: $tags")
+    [ -n "$click" ] && args+=(-H "Click: $click")
+    local hdr=""
+    [ -n "$NTFY_TOKEN" ] && hdr="Authorization: Bearer $NTFY_TOKEN"
+    curl "${args[@]}" -d "$text" "${basis%/}/$NTFY_TOPIC" 2>/dev/null <<<"$hdr"
+}
+
+if [ -n "$NTFY_URL_LOKAL" ]; then
+    code=$(senden "$NTFY_URL_LOKAL")
+    case "$code" in 2??) exit 0 ;; esac
+fi
+senden "$NTFY_URL" >/dev/null
+exit 0

@@ -1,0 +1,16 @@
+# Linux-Dashboard-Schutz: Sperrlisten (ipsets) in die Firewall einhaengen.
+[Unit]
+Description=Linux-Dashboard-Schutz: Firewall-Sperrlisten (WAECHTER-*)
+# Nach Docker/libvirt, damit deren Ketten schon stehen und unsere oben landen.
+After=network-online.target docker.service libvirtd.service ufw.service firewalld.service
+Wants=network-online.target
+Before=fail2ban.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/waechter-firewall.sh
+ExecStop=/usr/local/sbin/waechter-firewall.sh --stop
+
+[Install]
+WantedBy=multi-user.target

@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -54,6 +53,11 @@ def main():
     # Recover browser sessions from previous run and clean up orphan containers
     _browser_mgr.recover()
 
+    # Unbenutzte Browser-Sessions automatisch einfrieren (docker pause) — sie
+    # verbrauchen sonst dauerhaft CPU. Der Zustand bleibt dabei vollständig
+    # erhalten und wird beim nächsten Zugriff wieder aufgetaut.
+    _browser_mgr.start_idle_watcher()
+
     # Verwaiste VM-KasmVNC-Prozesse früherer Läufe beenden. Wegen pid:host
     # überleben sie Container-Neustarts und würden Ports/Displays blockieren
     # bzw. sich um die exklusive QEMU-VNC-Verbindung streiten.
@@ -80,9 +84,12 @@ def main():
     server = ThreadedServer((HOST, PORT), DashboardHandler)
 
     def shutdown(sig, frame):
+        # server.shutdown() blockiert, bis serve_forever() im SELBEN Thread
+        # zurückkehrt → im Signal-Handler ein Deadlock (SIGTERM wurde ignoriert,
+        # Docker musste nach 10 s mit SIGKILL nachhelfen). Daher aus einem
+        # Hilfs-Thread stoppen; serve_forever() kehrt dann unten zurück.
         print("\n[!] Shutting down...")
-        server.shutdown()
-        sys.exit(0)
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
@@ -90,7 +97,9 @@ def main():
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        server.shutdown()
+        pass
+    server.server_close()
+    sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+# Linux-Dashboard-Schutz (nur mit CLOUDFLARE=1)
+[Unit]
+Description=Cloudflare-Sperrliste mit fail2ban abgleichen (verwaiste Eintraege)
+After=fail2ban.service network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cf-ban-reconcile.sh

@@ -1,0 +1,14 @@
+# Linux-Dashboard-Schutz
+/var/log/suricata/eve.json /var/log/suricata/suricata.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 suricata suricata
+    sharedscripts
+    postrotate
+        /bin/kill -HUP $(cat /run/suricata.pid 2>/dev/null) 2>/dev/null || true
+    endscript
+}

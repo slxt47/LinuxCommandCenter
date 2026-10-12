@@ -1,0 +1,5 @@
+[Unit]
+Description=IDS-Tagesbericht per ntfy
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ids-tagesbericht.sh

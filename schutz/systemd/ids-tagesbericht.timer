@@ -1,0 +1,7 @@
+[Unit]
+Description=IDS-Tagesbericht taeglich
+[Timer]
+OnCalendar=*-*-* 05:50:00 UTC
+Persistent=false
+[Install]
+WantedBy=timers.target

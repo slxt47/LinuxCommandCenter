@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -26,15 +25,21 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
-from dashboard.auth import _LOGIN_HTML, _action_rate_limited, _login_rate_limited, _session_mgr, authenticate_user, create_user, delete_user, is_sudo_user, list_users, update_user
+from dashboard.auth import _LOGIN_HTML, _action_rate_limited, _login_rate_limited, _session_mgr, authenticate_user, client_ip, create_user, delete_user, invalidate_role_cache, is_sudo_user, list_users, live_role, log_auth_event, resolve_role, role_at_least, update_user
 from dashboard.base import NOVNC_DIR, SPICE_DIR, STATIC_DIR, _ns
 from dashboard.browsers import _browser_mgr
 from dashboard.consoles import _console_url, _kasm_client_inject, _proxy_mgr, _vmkasm_mgr, _ws_handshake_response, _ws_owner_for, _ws_port_for, _ws_recv, _ws_register, _ws_send
+from dashboard.docker import _docker_frames, _docker_stream_close, _ws_slot_free, _ws_slot_take, docker_changes, docker_container, docker_container_action, docker_container_remove, docker_container_rename, docker_container_update, docker_containers, docker_df, docker_events, docker_exec_cleanup, docker_exec_message_de, docker_exec_open, docker_exec_resize, docker_archive_open, docker_archive_put, docker_container_commit, docker_container_create, docker_hub_search, docker_hub_tags, docker_image_build, docker_image_history, docker_image_inspect, docker_image_pull, docker_image_remove, docker_image_save_open, docker_image_tag, docker_images, docker_inspect, docker_job, docker_jobs, docker_logs, docker_logs_open, docker_network, docker_network_connect, docker_network_create, docker_network_disconnect, docker_network_remove, docker_networks, docker_prune, docker_prune_dryrun, docker_stack_action, docker_stack_compose, docker_stacks, docker_stats, docker_system, docker_top, docker_volume, docker_volume_create, docker_volume_remove, docker_volumes
 from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked
 from dashboard.networks import list_networks, net_action, net_add_dhcp_host, net_create, net_dhcp_hosts, net_edit, net_get_xml, net_leases, net_remove_dhcp_host, net_set_xml
 from dashboard.storage import iso_delete, iso_download, iso_download_status, iso_list, list_isos, list_pools, list_volumes, vol_create, vol_delete
+from dashboard.security import security_bans, security_events, security_unban
+from dashboard.ids import ids_live
 from dashboard.sysinfo import get_cpu_info, get_disk_info, get_memory_info, get_network_info, get_services, get_system_info, get_top_processes, get_updates, run_update
 from dashboard.terminal import _pty_session, get_terminal_info
+from dashboard.vms import vm_ensure_absolute_pointer, vm_owner_get, vm_owner_set, vm_owner_remove, vm_names_owned_by, vm_viewers_get, vm_viewers_set, vm_viewers_remove, vm_names_visible_to
+from dashboard.vms import _v as _virsh
+from dashboard.vmshare import SHARE_COOKIE, _share_mgr, share_guest_inject, share_page, _esc as _share_esc
 from dashboard.vms import get_vm_display, get_vm_full, get_vms, list_host_devices, set_kasmvnc_pref, set_vm_vnc_keymap, vm_action, vm_add_device, vm_clone, vm_create, vm_delete, vm_device_list, vm_disk_attach, vm_disk_detach, vm_get_xml, vm_nic_attach, vm_nic_detach, vm_remove_device, vm_set_graphics, vm_set_xml, vm_snapshot_create, vm_snapshot_delete, vm_snapshot_list, vm_snapshot_revert, vm_stats, vm_update
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -63,14 +68,223 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         return _session_mgr.validate(self._get_session_token()) or ""
 
     def _get_session_role(self):
-        return _session_mgr.get_role(self._get_session_token())
+        """Rolle der aktuellen Sitzung — live vom Host, nicht die beim Login
+        eingefrorene. Sonst wirkt ein nachträglich vergebenes (oder entzogenes)
+        Admin-Recht (Gruppe dashadmin) erst beim nächsten Login. Die Session-Rolle bleibt Fallback,
+        falls der Benutzer nicht mehr auflösbar ist."""
+        token = self._get_session_token()
+        user = _session_mgr.validate(token)
+        if not user:
+            return None
+        return live_role(user, _session_mgr.get_role(token))
+
+    def _is_superadmin(self):
+        return self._get_session_role() == "superadmin"
 
     def _require_admin(self):
-        """Send 403 and return True if current session is not admin."""
-        if self._get_session_role() != "admin":
+        """403 + True, wenn die Sitzung weder admin noch superadmin ist."""
+        if not role_at_least(self._get_session_role(), "admin"):
             self.send_json({"error": "Keine Berechtigung"}, 403)
             return True
         return False
+
+    def _require_superadmin(self):
+        """403 + True, wenn die Sitzung kein superadmin ist (root/jokergame)."""
+        if not self._is_superadmin():
+            self.send_json({"error": "Nur für Superadmins"}, 403)
+            return True
+        return False
+
+    def _vm_denied(self, name, need="full"):
+        """Besitz-/Sichtbarkeitsprüfung. need="full": Superadmin oder Besitzer;
+        need="view": zusätzlich von Superadmins freigegebene Benutzer (Konsole,
+        Power-Aktionen, Lesen). Sendet 403 und liefert True bei Verweigerung."""
+        if self._is_superadmin():
+            return False
+        user = self._get_session_user()
+        if name and vm_owner_get(name) == user:
+            return False
+        if need == "view" and name and user in vm_viewers_get(name):
+            return False
+        self.send_json({"error": "VM nicht gefunden oder keine Berechtigung"}, 403)
+        return True
+
+    def _vm_access_level(self, name):
+        if self._is_superadmin() or vm_owner_get(name) == self._get_session_user():
+            return "full"
+        return "view"
+
+    def _browser_denied(self, session):
+        """Browser-Session: Superadmin, Besitzer oder freigegebener Benutzer."""
+        if self._is_superadmin():
+            return False
+        return not _browser_mgr.can_view(session, self._get_session_user())
+
+    def _admin_owns_path(self, path_or_name):
+        """Admins dürfen nur Volumes anhängen/anlegen/löschen, deren Dateiname mit
+        dem Namen einer eigenen VM beginnt (z. B. meinevm.qcow2, meinevm-data.qcow2).
+        Verhindert das Einbinden fremder VM-Disks oder beliebiger Host-Images."""
+        base = os.path.basename(str(path_or_name or ""))
+        owned = vm_names_owned_by(self._get_session_user())
+        return any(base == n or base.startswith(n + ".") or base.startswith(n + "-")
+                   or base.startswith(n + "_") for n in owned)
+
+    # ── Öffentliche VM-Freigaben (Gast-Links, siehe dashboard/vmshare.py) ────
+
+    def _share_from_cookie(self):
+        """Gültige Freigabe aus dem Gast-Cookie — None, wenn keins oder abgelaufen."""
+        sc = SimpleCookie()
+        try:
+            sc.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return None
+        if SHARE_COOKIE not in sc:
+            return None
+        return _share_mgr.get_valid(sc[SHARE_COOKIE].value)
+
+    def _share_for_ws_token(self, token):
+        """(share, is_share_token) für ein Konsolen-Token.
+
+        Gast-Tokens tragen den Besitzer "share:<id>". is_share_token=True und
+        share=None bedeutet: Freigabe inzwischen abgelaufen/widerrufen.
+        """
+        owner = _ws_owner_for(token) or ""
+        if not owner.startswith("share:"):
+            return None, False
+        return _share_mgr.get_valid(owner[len("share:"):]), True
+
+    def _send_html(self, body: bytes, status=200, extra_headers=None):
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra_headers or []):
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_share(self, sid: str, params):
+        """Einstieg für Gäste: /share/vm/<id> → Konsole der freigegebenen VM."""
+        share = _share_mgr.get_valid(sid)
+        if not share:
+            self._send_html(share_page(
+                "Link ungültig oder abgelaufen",
+                "Diese VM-Freigabe existiert nicht mehr. Bitte den Administrator um einen neuen Link.",
+                icon="&#128274;"), 410)
+            return
+        vm  = share["vm"]
+        url = f"/share/vm/{sid}"
+        if params.get("closed", [""])[0]:
+            self._send_html(share_page(
+                "Verbindung beendet",
+                f"Die Konsole von <b>{_share_esc(vm)}</b> wurde geschlossen. Die Freigabe ist "
+                "weiterhin gültig — du kannst dich erneut verbinden.",
+                icon="&#128075;", button=("Erneut verbinden", url)))
+            return
+        # Die VM muss laufen — ein Gast darf sie weder starten noch sonst verändern.
+        r = _virsh("domstate", vm)
+        if r.returncode != 0 or "running" not in (r.stdout or "").lower():
+            self._send_html(share_page(
+                "VM ist nicht eingeschaltet",
+                f"<b>{_share_esc(vm)}</b> läuft gerade nicht. Bitte später erneut versuchen "
+                "oder den Administrator informieren.",
+                icon="&#9208;", button=("Erneut versuchen", url)), 503)
+            return
+        ttl = max(60, int(float(share["expires"]) - time.time()))
+        res = self._console_session(vm, share.get("type", "kasmvnc"), f"share:{sid}", ttl=ttl)
+        if res.get("error"):
+            self._send_html(share_page(
+                "Konsole nicht verfügbar", _share_esc(res["error"]),
+                icon="&#9888;", button=("Erneut versuchen", url)), 503)
+            return
+        ip = client_ip(self)
+        _share_mgr.touch(sid, ip)
+        print(f"[vmshare] Gast-Zugriff auf VM {vm} ({share.get('type')}) von {ip}", flush=True)
+        # Cookie erlaubt dem Gast NUR die Konsolen-Seiten + deren statische Dateien
+        # (Gate in do_GET); SameSite=Lax, weil der Einstieg von extern kommt.
+        cookie = (f"{SHARE_COOKIE}={sid}; HttpOnly;{self._cookie_secure()} Path=/; SameSite=Lax; "
+                  f"Max-Age={ttl}")
+        self.send_response(302)
+        self.send_header("Location", res["url"])
+        self.send_header("Set-Cookie", cookie)
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _console_session(self, name: str, dtype: str, owner: str, ttl: int = 1800) -> dict:
+        """Konsole für eine VM bereitstellen (Proxy starten, Token registrieren).
+
+        Liefert {"type", "url", "notice"} oder {"error"}. Wird von /api/vm/console
+        (Admin) und /share/vm/<id> (Gast, owner="share:<id>") gemeinsam genutzt.
+        """
+        # Absolutes Zeigegerät sicherstellen (USB-Tablet, live per Hotplug):
+        # nur so liegt der Gast-Mauszeiger exakt unter dem Fadenkreuz/Cursor
+        # der Konsole — gilt für VNC, SPICE und KasmVNC gleichermaßen.
+        notice = ""
+        try:
+            _ptr = vm_ensure_absolute_pointer(name)
+            if _ptr.get("attached"):
+                notice = "USB-Tablet (absoluter Mauszeiger) zur VM hinzugefügt"
+                if _ptr.get("warnings"):
+                    notice += " — " + "; ".join(_ptr["warnings"])
+            elif _ptr.get("error"):
+                print(f"[console] Tablet-Hotplug für {name} nicht möglich: {_ptr['error']}", flush=True)
+        except Exception as _e:
+            print(f"[console] Tablet-Hotplug für {name} fehlgeschlagen: {_e}", flush=True)
+        if dtype == "kasmvnc":
+            # Echter KasmVNC-Server pro VM (gleicher Stack wie Browser-Sessions):
+            # VM-Display → remote-viewer → Xkasmvnc → Token-Proxy → Browser.
+            # SPICE bevorzugen (spice-vdagent passt die ECHTE VM-Auflösung an die
+            # Browsergröße an; QEMU-VNC lehnt SetDesktopSize ab → nur Letterbox),
+            # VNC als Fallback. Auch SPICE-only-VMs funktionieren so.
+            if not (os.path.exists("/usr/bin/Xkasmvnc15") or os.path.exists("/usr/bin/Xkasmvnc")):
+                return {"error": "KasmVNC-Server nicht installiert (Image neu bauen)"}
+            spice = get_vm_display(name, "spice")
+            vnc   = get_vm_display(name, "vnc")
+            if "error" not in spice and spice.get("port"):
+                viewer_target = f"spice://{spice['listen']}:{spice['port']}"
+            elif "error" not in vnc and vnc.get("port"):
+                viewer_target = f"vnc://{vnc['listen']}:{vnc['port']}"
+            else:
+                return {"error": "VM hat keine VNC/SPICE-Konsole"}
+            try:
+                ws_port = _vmkasm_mgr.get_or_start(name, viewer_target)
+                token   = _ws_register(ws_port, owner, ttl=ttl)
+                proto   = self.headers.get("X-Forwarded-Proto", "http")
+                host    = self.headers.get("Host", "localhost")
+                return {
+                    "type": "kasmvnc",
+                    "url":  f"{proto}://{host}/kasmvnc-vm/{token}/",
+                    "notice": notice,
+                }
+            except Exception as e:
+                return {"error": str(e)}
+        # Einfache VNC/SPICE-Konsole über websockify
+        display = get_vm_display(name, dtype)
+        if "error" in display:
+            return display
+        target = f"{display['listen']}:{display['port']}"
+        if display["type"] == "vnc":
+            web_dir   = NOVNC_DIR
+            html_page = "vnc_cmd.html"
+        elif display["type"] == "spice":
+            web_dir   = SPICE_DIR
+            html_page = "spice_cmd.html"
+        else:
+            return {"error": f"Unbekannter Typ: {display['type']}"}
+        try:
+            ws_port = _proxy_mgr.get_or_start(f"{display['type']}_{name}", target, web_dir)
+            token   = _ws_register(ws_port, owner, ttl=ttl)
+            ctype   = display["type"]   # "vnc" or "spice"
+            keymap  = display.get("keymap", "us")
+            return {
+                "type": ctype,
+                "url":  _console_url(self.headers, ctype, token) + f"&keymap={keymap}",
+                "notice": notice,
+            }
+        except FileNotFoundError:
+            return {"error": "websockify nicht installiert"}
+        except Exception as e:
+            return {"error": str(e)}
 
     def _redirect(self, location, status=302):
         self.send_response(status)
@@ -92,6 +306,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
         # Verhindert, dass Konsolen-Tokens in URLs via Referer nach außen lecken.
         self.send_header("Referrer-Policy", "no-referrer")
+        # Statische Dateien gingen bisher nur mit Last-Modified raus, ohne
+        # Cache-Control. Browser leiten daraus eine eigene Haltbarkeit ab
+        # (Faustregel: 10 % des Dateialters) und fragen in der Zeit gar nicht
+        # erst nach — nach einem Deploy sah man tagelang die alte Oberfläche.
+        # Revalidierung erzwingen: die Dateien sind klein, und mit
+        # If-Modified-Since bleibt es bei einem 304, solange sich nichts ändert.
+        if getattr(self, "_static_asset", False):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
         super().end_headers()
 
     def send_json(self, data, status=200):
@@ -103,41 +325,89 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
     # ── IP access control ────────────────────────────────────────────────────
-    # Only allow requests from localhost or Docker bridge networks (172.x / 10.x).
-    # Direct LAN / public-IP access is blocked — traffic must come through the
-    # Cloudflare tunnel (cloudflared container at 172.x).
+    # Standard: nur localhost und Docker-Bridges (10/8, 172.16/12) - also nur
+    # ueber einen lokalen Reverse-Proxy oder einen Tunnel-Container.
+    #
+    # DASHBOARD_ALLOWED_NETS (Komma-getrennt, /etc/linux-dashboard/dashboard.env)
+    # erweitert die Liste fuer Systeme OHNE Tunnel:
+    #   "*"                         = jeder Zugriff erlaubt (nur hinter Firewall!)
+    #   "192.168.0.0/16,100.64.0.0/10" = CIDR-Netze
+    #   "192.168.,100."             = IP-Praefixe (alte Schreibweise)
+    # DASHBOARD_PUBLIC_URL: Adresse, auf die die Sperrseite verweist (optional).
 
-    _ALLOWED_NETS = ('127.', '172.', '10.', '::1', '::ffff:127.', '::ffff:172.')
-
-    # Zusätzliche erlaubte IP-Präfixe (kommagetrennt) über DASHBOARD_ALLOWED_NETS.
-    # "*" = jeden Zugriff erlauben (z. B. für direkten LAN-Zugriff auf einem
-    # neuen System ohne Cloudflare-Tunnel). Standardmäßig leer → altes Verhalten.
-    _EXTRA_NETS = tuple(
-        p.strip() for p in os.environ.get("DASHBOARD_ALLOWED_NETS", "").split(",") if p.strip()
-    )
-    _ALLOW_ALL = "*" in _EXTRA_NETS
+    import ipaddress as _ipa
+    _ALLOWED_NETS = ('127.', '::1', '::ffff:127.')
+    _EXTRA_PREFIXES = []
+    # Docker-Bridges / Tunnel-Container (frueher Praefix '172.', das auch
+    # oeffentliche 172.x-Adressen traf)
+    _EXTRA_CIDRS = [_ipa.ip_network('10.0.0.0/8'), _ipa.ip_network('172.16.0.0/12')]
+    for _entry in os.environ.get("DASHBOARD_ALLOWED_NETS", "").split(","):
+        _entry = _entry.strip()
+        if not _entry:
+            continue
+        if "/" in _entry:
+            try:
+                _EXTRA_CIDRS.append(_ipa.ip_network(_entry, strict=False))
+            except ValueError:
+                print(f"[dashboard] DASHBOARD_ALLOWED_NETS: ungueltiges Netz {_entry!r}", flush=True)
+        else:
+            _EXTRA_PREFIXES.append(_entry)
+    _ALLOW_ALL = "*" in _EXTRA_PREFIXES
+    _PUBLIC_URL = os.environ.get("DASHBOARD_PUBLIC_URL", "").strip()
 
     def _is_allowed_ip(self) -> bool:
         if self._ALLOW_ALL:
             return True
         ip = self.client_address[0]
-        return any(ip.startswith(p) for p in self._ALLOWED_NETS + self._EXTRA_NETS)
+        if any(ip.startswith(p) for p in self._ALLOWED_NETS) or \
+           any(ip.startswith(p) for p in self._EXTRA_PREFIXES):
+            return True
+        if self._EXTRA_CIDRS:
+            try:
+                addr = self._ipa.ip_address(ip)
+                if addr.version == 6 and addr.ipv4_mapped:
+                    addr = addr.ipv4_mapped
+            except ValueError:
+                return False
+            return any(addr.version == n.version and addr in n for n in self._EXTRA_CIDRS)
+        return False
 
     def _deny_direct_access(self):
+        from html import escape as _esc
+        if self._PUBLIC_URL.startswith(("http://", "https://")):
+            u = _esc(self._PUBLIC_URL, quote=True)
+            hint = f"Bitte verwende <a href='{u}' style='color:#00e87b'>{u}</a>"
+        else:
+            hint = "Zugriff von dieser Adresse ist nicht freigegeben (DASHBOARD_ALLOWED_NETS)."
         body = (
-            b"<html><body style='font-family:monospace;background:#06080d;color:#ef4444;"
-            b"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
-            b"<div style='text-align:center'>"
-            b"<div style='font-size:48px;margin-bottom:16px'>&#128274;</div>"
-            b"<b>Direktzugriff gesperrt</b><br><br>"
-            b"Bitte verwende <a href='https://home.jokerdev.tech' "
-            b"style='color:#00e87b'>https://home.jokerdev.tech</a></div></body></html>"
-        )
+            "<html><body style='font-family:monospace;background:#06080d;color:#ef4444;"
+            "display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
+            "<div style='text-align:center'>"
+            "<div style='font-size:48px;margin-bottom:16px'>&#128274;</div>"
+            f"<b>Direktzugriff gesperrt</b><br><br>{hint}</div></body></html>"
+        ).encode()
         self.send_response(403)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _cookie_secure(self) -> str:
+        """" Secure;" fuer Cookies, wenn der Browser per HTTPS kommt.
+        Hinter Tunnel/Reverse-Proxy (Proxy-Header vorhanden) immer, bei direktem
+        HTTP-Zugriff (Server ohne Cloudflare/HTTPS) nicht - sonst schickt der
+        Browser das Sitzungs-Cookie nie zurueck und der Login scheitert still.
+        DASHBOARD_COOKIE_SECURE=1/0 erzwingt bzw. verbietet das Flag."""
+        mode = os.environ.get("DASHBOARD_COOKIE_SECURE", "auto").strip().lower()
+        if mode in ("1", "true", "yes", "ja"):
+            return " Secure;"
+        if mode in ("0", "false", "no", "nein"):
+            return ""
+        h = self.headers
+        if (h.get("X-Forwarded-Proto") or "").lower() == "https" or h.get("CF-Connecting-IP") \
+           or h.get("X-Real-IP") or h.get("X-Forwarded-For"):
+            return " Secure;"
+        return ""
 
     # ── Static file from arbitrary directory ─────────────────────────────────
 
@@ -163,7 +433,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     # ── Console HTML serving (patches WebSocket URL at serve time) ────────────
 
-    def _serve_console(self, console_type: str, session_token: str):
+    def _serve_console(self, console_type: str, session_token: str, share=None):
         if console_type == "vnc":
             src = os.path.join(NOVNC_DIR, "vnc_cmd.html")
             html = open(src, encoding="utf-8").read()
@@ -190,6 +460,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_error(400)
             return
         body = html.encode("utf-8")
+        if share:
+            # Gast-Link: Badge mit Restlaufzeit + Sperrbild bei Ablauf
+            inject = share_guest_inject(share, console_type)
+            body = body.replace(b"</body>", inject + b"</body>", 1) if b"</body>" in body else body + inject
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -199,7 +473,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     # ── KasmVNC VM proxy (reverse proxy to the per-VM KasmVNC server) ─────────
 
-    def _kasmvnc_vm_proxy(self, token: str, subpath: str):
+    def _kasmvnc_vm_proxy(self, token: str, subpath: str, share=None):
         """Reverse-proxy to the per-VM Xkasmvnc instance.
 
         Der Browser spricht mit einem echten KasmVNC-Server (gleiche Erfahrung
@@ -258,11 +532,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 b'localStorage.setItem("resize","remote");'
                 b'})();</script>'
             )
+            _after = f"/share/vm/{share['id']}?closed=1" if share else "/"
             _stop_js = (
                 'try{window.close();}catch(x){}'
-                'setTimeout(function(){window.location.href="/";},200);'
+                'setTimeout(function(){window.location.href=' + json.dumps(_after) + ';},200);'
             )
             inject = presets + _kasm_client_inject(f"/ws/{token}", _stop_js)
+            if share:
+                # Gast-Link: KasmVNC-Steuerleiste (Verbindungs-/Anzeige-Einstellungen,
+                # Trennen) ausblenden + Badge mit Restlaufzeit
+                inject += share_guest_inject(share, "kasmvnc")
             if b"</head>" in body:
                 body = body.replace(b"</head>", inject + b"</head>", 1)
             else:
@@ -278,8 +557,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     # ── TCP-level WebSocket splice to internal websockify ────────────────────
 
-    def _ws_splice(self, backend_port: int):
-        """Forward the current WebSocket connection to 127.0.0.1:backend_port."""
+    def _ws_splice(self, backend_port: int, share_id: str = None):
+        """Forward the current WebSocket connection to 127.0.0.1:backend_port.
+
+        share_id — bei Gast-Links: beide Sockets werden beim VMShareManager
+        registriert, der sie bei Ablauf/Widerruf der Freigabe sofort schließt.
+        """
         try:
             backend = socket.create_connection(("127.0.0.1", backend_port), timeout=5)
         except OSError:
@@ -322,6 +605,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         self.connection.sendall(buf)
         self.close_connection = True
+        if share_id:
+            _share_mgr.register_conn(share_id, self.connection, backend)
 
         # Bidirectional raw-byte relay (no WebSocket framing needed — both sides
         # have already exchanged 101, we just pass bytes through)
@@ -345,6 +630,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         pump(self.connection, backend)
         t.join(timeout=2)
         backend.close()
+        if share_id:
+            _share_mgr.unregister_conn(share_id, self.connection, backend)
 
     # ── KasmVNC reverse proxy ─────────────────────────────────────────────────
 
@@ -355,10 +642,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if not session:
             self.send_error(404, "Session nicht gefunden")
             return
-        if self._get_session_role() != "admin" and \
-           session.get("owner") != self._get_session_user():
+        if self._browser_denied(session):
             self.send_error(403, "Keine Berechtigung")
             return
+        # Eingefrorene Session (Idle-Pause) beim Öffnen wieder auftauen — sie
+        # läuft danach exakt im vorherigen Zustand weiter.
+        if _browser_mgr.ensure_running(sid):
+            time.sleep(0.3)   # kurz warten, bis der HTTPS-Server wieder antwortet
+        _browser_mgr.touch(sid, save=True)
         port = session["port"]
         pw   = session.get("vnc_password", "")
         auth = base64.b64encode(f"kasm_user:{pw}".encode()).decode()
@@ -384,7 +675,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     fwd_headers[k] = v
             body_data = None
             if self.command in ("POST", "PUT", "PATCH"):
-                clen = int(self.headers.get("Content-Length", 0))
+                # Nicht-numerischer Header darf den Thread nicht abbrechen.
+                try:
+                    clen = int(self.headers.get("Content-Length", 0) or 0)
+                except (TypeError, ValueError):
+                    clen = 0
                 body_data = self.rfile.read(clen) if clen > 0 else b""
             conn.request(self.command, target, body=body_data, headers=fwd_headers)
             resp = conn.getresponse()
@@ -420,15 +715,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     1
                 )
 
-            # Inject WebSocket redirect + mobile UX fixes into HTML
+            # Inject WebSocket redirect + mobile UX fixes into HTML.
+            # Kein ✕-Button in der Session: das Beenden läuft ausschließlich über die
+            # Sessionverwaltung im Dashboard (mit Rückfrage) — auf dem Handy lag der
+            # Knopf direkt neben der Tastatur und löschte die Session versehentlich.
             if "text/html" in ct and body:
-                _stop_js = (
-                    f'fetch("/api/browser/stop",{{method:"POST",credentials:"same-origin",'
-                    f'headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{id:"{sid}"}})}})'
-                    '.then(function(){try{window.close();}catch(x){}setTimeout(function(){window.location.href="/";},200);})'
-                    '.catch(function(){window.location.href="/";});'
-                )
-                inject = _kasm_client_inject(f"/kasmvnc-ws/{sid}", _stop_js)
+                inject = _kasm_client_inject(f"/kasmvnc-ws/{sid}", "", beacon_sid=sid)
                 if b"</head>" in body:
                     body = body.replace(b"</head>", inject + b"</head>", 1)
                 else:
@@ -467,10 +759,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if not session:
             self.send_error(404, "Session nicht gefunden")
             return
-        if self._get_session_role() != "admin" and \
-           session.get("owner") != self._get_session_user():
+        if self._browser_denied(session):
             self.send_error(403, "Keine Berechtigung")
             return
+        # Auch hier auftauen: der Client verbindet sich direkt per WebSocket neu,
+        # ohne die HTML-Seite erneut zu laden (z. B. nach Reconnect).
+        if _browser_mgr.ensure_running(sid):
+            time.sleep(0.3)
+        _browser_mgr.touch(sid, save=True)
         port = session["port"]
 
         # Complete handshake with browser — must echo Sec-WebSocket-Protocol or
@@ -610,6 +906,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        self._static_asset = False
         # Block direct LAN / public-IP access — only Cloudflare tunnel IPs allowed
         if not self._is_allowed_ip():
             self._deny_direct_access()
@@ -628,14 +925,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 _session_mgr.invalidate(token)
             self.send_response(302)
             self.send_header("Location", "/login")
-            self.send_header("Set-Cookie", "session=; HttpOnly; Secure; Path=/; SameSite=Strict; Max-Age=0")
+            self.send_header("Set-Cookie", f"session=; HttpOnly;{self._cookie_secure()} Path=/; SameSite=Strict; Max-Age=0")
             self.end_headers()
             return
 
         # Token-Pfade: überspringen die generische Auth hier und prüfen im jeweiligen
         # Handler selbst Session + Token-Owner (siehe /ws/ und /kasmvnc-vm/ unten).
-        if path.startswith("/ws/") or path.startswith("/kasmvnc-vm/"):
+        if path.startswith(("/ws/", "/kasmvnc-vm/", "/share/vm/")):
             pass  # handled later in the elif chain without auth
+        # Gast einer öffentlichen VM-Freigabe (Cookie aus /share/vm/<id>): nur die
+        # Konsolen-Seiten und deren statische Client-Dateien — sonst nichts. Die
+        # Konsolen-Tokens selbst sind zusätzlich an die Freigabe gebunden (/ws/).
+        elif path.startswith(("/console/", "/novnc/", "/spice-html5/")) and self._share_from_cookie():
+            pass
         # All other paths require authentication
         elif not self._is_authenticated():
             if path.startswith("/api/"):
@@ -644,17 +946,41 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._redirect("/login")
             return
 
-        # Lesende VM-/Infrastruktur-Endpunkte (inkl. Konsolen-Zugriff) sind
-        # ebenfalls Admin-only — ein Nicht-Admin hat hier nichts zu suchen.
-        if path.startswith(("/api/vm", "/api/network", "/api/storage", "/api/user")):
+        # Rollen-Gates (lesend): Benutzer-/Docker-Verwaltung, Host-Geräteliste und
+        # rohes Domain-XML nur für Superadmins; VM-/Netz-/Storage-Lesezugriff
+        # (VM-Assistent braucht Netze, Pools, Volumes, ISOs) ab Rolle admin.
+        if path.startswith(("/api/user", "/api/docker", "/api/security")) or \
+           path in ("/api/vm/hostdevices", "/api/vm/xml", "/api/vm/access"):
+            if self._require_superadmin():
+                return
+        # Lesend/Konsole für eigene UND freigegebene VMs — jede Rolle (auch "user",
+        # sofern ein Superadmin ihm eine VM sichtbar gemacht hat).
+        _VM_VIEW_GET = ("/api/vm/details", "/api/vm/stats", "/api/vm/console",
+                        "/api/vm/snapshots", "/api/vm/devices")
+        if path == "/api/vms":
+            pass
+        elif path in _VM_VIEW_GET:
+            if not self._is_superadmin():
+                _vmname = parse_qs(parsed.query).get("name", [""])[0]
+                if self._vm_denied(_vmname, "view"):
+                    return
+        elif path.startswith(("/api/vm", "/api/network", "/api/storage")):
             if self._require_admin():
                 return
+            # Admins: übrige VM-Einzelendpunkte (?name=…) nur für eigene VMs
+            if path.startswith("/api/vm/") and not self._is_superadmin():
+                _vmname = parse_qs(parsed.query).get("name", [""])[0]
+                if self._vm_denied(_vmname):
+                    return
 
         if path == "/api/me":
             token = self._get_session_token()
+            _me = _session_mgr.validate(token)
             self.send_json({
-                "username": _session_mgr.validate(token),
-                "role": _session_mgr.get_role(token),
+                "username": _me,
+                "role": self._get_session_role(),
+                # Anzahl eigener/freigegebener VMs → Frontend zeigt "user" den VM-Reiter
+                "vm_access": len(vm_names_visible_to(_me)) if _me else 0,
             })
 
         elif path == "/api/ping":
@@ -686,29 +1012,61 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/network":
             self.send_json(get_network_info())
         elif path == "/api/processes":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(get_top_processes())
         elif path == "/api/services":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(get_services())
         elif path == "/api/users":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(list_users())
         elif path == "/api/terminal/info":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(get_terminal_info())
+        elif path == "/api/security/events":
+            if self._require_superadmin(): return
+            _q = parse_qs(parsed.query)
+            _g = lambda k, d="": _q.get(k, [d])[0]
+            self.send_json(security_events(
+                q=_g("q")[:200],
+                kinds=[k for k in _g("kinds").split(",") if k],
+                sources=[k for k in _g("sources").split(",") if k],
+                apps=[k for k in _g("apps").split(",") if k],
+                sort=_g("sort", "ts"), desc=_g("dir", "desc") != "asc",
+                limit=_g("limit", "200"), offset=_g("offset", "0")))
+        elif path == "/api/security/ids":
+            if self._require_superadmin(): return
+            _q = parse_qs(parsed.query)
+            self.send_json(ids_live(_q.get("range", ["60"])[0][:5], _q.get("since", ["0"])[0][:20]))
+        elif path == "/api/security/bans":
+            if self._require_superadmin(): return
+            self.send_json(security_bans(client_ip(self)))
         elif path == "/api/updates":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(get_updates())
         elif path == "/api/vms":
-            self.send_json(get_vms())
+            _d = get_vms()
+            _u = self._get_session_user()
+            if not self._is_superadmin():
+                _vis = vm_names_visible_to(_u)
+                _d["vms"] = [v for v in _d.get("vms", []) if v.get("name") in _vis]
+            for _vm in _d.get("vms", []):
+                _vm["access"] = "full" if (self._is_superadmin() or _vm.get("owner") == _u) else "view"
+            for _vm in _d.get("vms", []):
+                _vm["public_shares"] = _share_mgr.count_active(_vm.get("name", ""))
+            self.send_json(_d)
         elif path == "/api/vm/details":
             params = parse_qs(parsed.query)
             name = params.get("name", [""])[0]
             if not name:
                 self.send_json({"error": "name parameter erforderlich"}, 400)
                 return
-            self.send_json(get_vm_full(name))
+            _res = get_vm_full(name)
+            if isinstance(_res, dict) and "error" not in _res:
+                _res["owner"] = vm_owner_get(name)
+                _res["viewers"] = vm_viewers_get(name)
+                _res["access"] = self._vm_access_level(name)
+            self.send_json(_res)
 
         elif path == "/api/vm/stats":
             params = parse_qs(parsed.query)
@@ -734,6 +1092,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/vm/hostdevices":
             self.send_json(list_host_devices())
+
+        elif path == "/api/vm/access":
+            name = parse_qs(parsed.query).get("name", [""])[0]
+            if not name:
+                self.send_json({"error": "name parameter erforderlich"}, 400)
+                return
+            self.send_json({"owner": vm_owner_get(name), "viewers": vm_viewers_get(name)})
 
         elif path == "/api/vm/snapshots":
             params = parse_qs(parsed.query)
@@ -787,6 +1152,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/storage/iso/downloads":
             self.send_json(iso_download_status())
 
+        elif path == "/api/vm/shares":
+            name = parse_qs(parsed.query).get("name", [""])[0]
+            if not name:
+                self.send_json({"error": "name parameter erforderlich"}, 400)
+                return
+            proto = self.headers.get("X-Forwarded-Proto", "http")
+            host  = self.headers.get("Host", "localhost")
+            shares = _share_mgr.list_for_vm(name)
+            for _s in shares:
+                _s["url"] = f"{proto}://{host}/share/vm/{_s['id']}"
+            self.send_json({"shares": shares})
+
         elif path == "/api/vm/console":
             params = parse_qs(parsed.query)
             name  = params.get("name",  [""])[0]
@@ -794,68 +1171,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not name:
                 self.send_json({"error": "name parameter erforderlich"}, 400)
                 return
-            if dtype == "kasmvnc":
-                # Echter KasmVNC-Server pro VM (gleicher Stack wie Browser-Sessions):
-                # VM-Display → remote-viewer → Xkasmvnc → Token-Proxy → Browser.
-                # SPICE bevorzugen (spice-vdagent passt die ECHTE VM-Auflösung an die
-                # Browsergröße an; QEMU-VNC lehnt SetDesktopSize ab → nur Letterbox),
-                # VNC als Fallback. Auch SPICE-only-VMs funktionieren so.
-                if not (os.path.exists("/usr/bin/Xkasmvnc15") or os.path.exists("/usr/bin/Xkasmvnc")):
-                    self.send_json({"error": "KasmVNC-Server nicht installiert (Image neu bauen)"})
-                    return
-                spice = get_vm_display(name, "spice")
-                vnc   = get_vm_display(name, "vnc")
-                if "error" not in spice and spice.get("port"):
-                    viewer_target = f"spice://{spice['listen']}:{spice['port']}"
-                elif "error" not in vnc and vnc.get("port"):
-                    viewer_target = f"vnc://{vnc['listen']}:{vnc['port']}"
-                else:
-                    self.send_json({"error": "VM hat keine VNC/SPICE-Konsole"})
-                    return
-                try:
-                    ws_port = _vmkasm_mgr.get_or_start(name, viewer_target)
-                    token   = _ws_register(ws_port, self._get_session_user())
-                    proto   = self.headers.get("X-Forwarded-Proto", "http")
-                    host    = self.headers.get("Host", "localhost")
-                    self.send_json({
-                        "type": "kasmvnc",
-                        "url":  f"{proto}://{host}/kasmvnc-vm/{token}/",
-                    })
-                except Exception as e:
-                    self.send_json({"error": str(e)})
-                return
-            # Einfache VNC/SPICE-Konsole über websockify
-            display = get_vm_display(name, dtype)
-            if "error" in display:
-                self.send_json(display)
-                return
-            target = f"{display['listen']}:{display['port']}"
-            if display["type"] == "vnc":
-                web_dir   = NOVNC_DIR
-                html_page = "vnc_cmd.html"
-            elif display["type"] == "spice":
-                web_dir   = SPICE_DIR
-                html_page = "spice_cmd.html"
-            else:
-                self.send_json({"error": f"Unbekannter Typ: {display['type']}"})
-                return
-            try:
-                ws_port = _proxy_mgr.get_or_start(f"{display['type']}_{name}", target, web_dir)
-                token   = _ws_register(ws_port, self._get_session_user())
-                ctype   = display["type"]   # "vnc" or "spice"
-                keymap  = display.get("keymap", "us")
-                self.send_json({
-                    "type": ctype,
-                    "url":  _console_url(self.headers, ctype, token) + f"&keymap={keymap}",
-                })
-            except FileNotFoundError:
-                self.send_json({"error": "websockify nicht installiert"})
-            except Exception as e:
-                self.send_json({"error": str(e)})
+            self.send_json(self._console_session(name, dtype, self._get_session_user()))
         # ── Browser sessions ──────────────────────────────────────────────────
         elif path == "/api/browser/list":
             _u = self._get_session_user()
-            _admin = self._get_session_role() == "admin"
+            _admin = self._is_superadmin()
             sessions = _browser_mgr.list_all(owner=_u, is_admin=_admin)
             proto = self.headers.get("X-Forwarded-Proto", "http")
             host  = self.headers.get("Host", "localhost")
@@ -869,11 +1189,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # ── External connections ──────────────────────────────────────────────
         elif path == "/api/ext/list":
             _u = self._get_session_user()
-            _admin = self._get_session_role() == "admin"
+            _admin = self._is_superadmin()
             self.send_json({"connections": _ext_mgr.list_all(owner=_u, is_admin=_admin)})
 
         elif path == "/api/terminal/ws":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             if self.headers.get("Upgrade", "").lower() != "websocket":
                 self.send_json({"error": "WebSocket upgrade required"}, 426)
                 return
@@ -886,7 +1206,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             cid = path[len("/api/ext/ssh/ws/"):]
             conn = _ext_mgr.get(cid, with_password=True,
                                 owner=self._get_session_user(),
-                                is_admin=self._get_session_role() == "admin")
+                                is_admin=self._is_superadmin())
             if not conn:
                 self.send_json({"error": "Verbindung nicht gefunden"}, 404)
                 return
@@ -914,13 +1234,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if port is None:
                 self.send_error(404, "Unknown session")
                 return
+            _share, _is_share = self._share_for_ws_token(token)
+            if _is_share:
+                # Gast-Link: kein Login, aber die Freigabe muss noch gelten.
+                if not _share:
+                    self.send_error(410, "Freigabe abgelaufen")
+                    return
+                _vmkasm_mgr.ws_delta(port, +1)
+                try:
+                    self._ws_splice(port, share_id=_share["id"])
+                finally:
+                    _vmkasm_mgr.ws_delta(port, -1)
+                return
             # F2: gültige Session nötig — Token allein reicht nicht mehr.
             if not self._is_authenticated():
                 self.send_error(401, "Nicht authentifiziert")
                 return
             # F1: Token ist an den Besitzer gebunden (Nicht-Admin nur eigene).
             _owner = _ws_owner_for(token)
-            if _owner and self._get_session_role() != "admin" \
+            if _owner and not self._is_superadmin() \
                       and _owner != self._get_session_user():
                 self.send_error(403, "Keine Berechtigung")
                 return
@@ -933,26 +1265,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 _vmkasm_mgr.ws_delta(port, -1)
 
         # ── Console HTML pages ────────────────────────────────────────────────
-        elif path == "/console/vnc":
+        elif path in ("/console/vnc", "/console/spice"):
             token = parse_qs(parsed.query).get("session", [""])[0]
-            self._serve_console("vnc", token)
+            _share, _is_share = self._share_for_ws_token(token)
+            if _is_share and not _share:
+                self._send_html(share_page(
+                    "Freigabe abgelaufen",
+                    "Der Zugriff auf diese VM wurde beendet.", icon="&#9203;"), 410)
+                return
+            self._serve_console(path.rsplit("/", 1)[1], token, share=_share)
 
-        elif path == "/console/spice":
-            token = parse_qs(parsed.query).get("session", [""])[0]
-            self._serve_console("spice", token)
+        # ── Öffentliche VM-Freigabe (Gast-Link, ohne Login) ──────────────────
+        elif path.startswith("/share/vm/"):
+            sid = path[len("/share/vm/"):].strip("/").split("/", 1)[0]
+            self._serve_share(sid, parse_qs(parsed.query))
 
         # ── KasmVNC VM viewer ─────────────────────────────────────────────────
         elif path.startswith("/kasmvnc-vm/"):
             # /kasmvnc-vm/{token}/{subpath}
-            if not self._is_authenticated():
-                self.send_error(401, "Nicht authentifiziert")
-                return
             rest  = path[len("/kasmvnc-vm/"):]
             parts = rest.split("/", 1)
             token   = parts[0]
             subpath = parts[1] if len(parts) > 1 else ""
+            _share, _is_share = self._share_for_ws_token(token)
+            if _is_share:
+                if not _share:
+                    self._send_html(share_page(
+                        "Freigabe abgelaufen",
+                        "Der Zugriff auf diese VM wurde beendet.", icon="&#9203;"), 410)
+                    return
+                self._kasmvnc_vm_proxy(token, subpath, share=_share)
+                return
+            if not self._is_authenticated():
+                self.send_error(401, "Nicht authentifiziert")
+                return
             _owner = _ws_owner_for(token)
-            if _owner and self._get_session_role() != "admin" \
+            if _owner and not self._is_superadmin() \
                       and _owner != self._get_session_user():
                 self.send_error(403, "Keine Berechtigung")
                 return
@@ -986,9 +1334,235 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             subpath = parts[1] if len(parts) > 1 else ""
             self._kasmvnc_http_proxy(sid, subpath, parsed.query)
 
+        # ── Docker-Verwaltung (lesend) ────────────────────────────────────────
+        # Admin-Gate greift bereits oben über das Prefix "/api/docker".
+        elif path == "/api/docker/containers":
+            self.send_json({"containers": docker_containers()})
+
+        elif path == "/api/docker/container":
+            cid = parse_qs(parsed.query).get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_container(cid))
+
+        elif path == "/api/docker/container/inspect":
+            cid = parse_qs(parsed.query).get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_inspect(cid))
+
+        elif path == "/api/docker/container/top":
+            params = parse_qs(parsed.query)
+            cid = params.get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_top(cid, params.get("ps_args", ["-ef"])[0]))
+
+        elif path == "/api/docker/container/changes":
+            cid = parse_qs(parsed.query).get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_changes(cid))
+
+        elif path == "/api/docker/container/logs":
+            params = parse_qs(parsed.query)
+            cid = params.get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_logs(cid,
+                                       tail=params.get("tail", ["200"])[0],
+                                       timestamps=params.get("timestamps", ["0"])[0] == "1",
+                                       since=params.get("since", ["0"])[0]))
+
+        elif path == "/api/docker/images":
+            self.send_json({"images": docker_images()})
+
+        elif path == "/api/docker/image/inspect":
+            ref = parse_qs(parsed.query).get("id", [""])[0]
+            if not ref:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_image_inspect(ref))
+
+        elif path == "/api/docker/image/history":
+            ref = parse_qs(parsed.query).get("id", [""])[0]
+            if not ref:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_image_history(ref))
+
+        elif path == "/api/docker/networks":
+            self.send_json({"networks": docker_networks()})
+
+        elif path == "/api/docker/network":
+            nid = parse_qs(parsed.query).get("id", [""])[0]
+            if not nid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_network(nid))
+
+        elif path == "/api/docker/volumes":
+            self.send_json({"volumes": docker_volumes()})
+
+        elif path == "/api/docker/volume":
+            name = parse_qs(parsed.query).get("name", [""])[0]
+            if not name:
+                self.send_json({"error": "name parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_volume(name))
+
+        elif path == "/api/docker/stacks":
+            self.send_json({"stacks": docker_stacks()})
+
+        elif path == "/api/docker/stack/compose":
+            proj = parse_qs(parsed.query).get("project", [""])[0]
+            if not proj:
+                self.send_json({"error": "project parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_stack_compose(proj))
+
+        elif path == "/api/docker/system":
+            self.send_json(docker_system())
+
+        elif path == "/api/docker/df":
+            self.send_json(docker_df())
+
+        elif path.startswith("/api/docker/ws/logs/"):
+            cid = path[len("/api/docker/ws/logs/"):]
+            if self.headers.get("Upgrade", "").lower() != "websocket":
+                self.send_json({"error": "WebSocket upgrade required"}, 426)
+                return
+            det = docker_container(cid)
+            if det.get("error"):
+                self.send_json({"error": det["error"]}, 404)
+                return
+            ws_key = self.headers.get("Sec-WebSocket-Key", "")
+            self.connection.sendall(_ws_handshake_response(ws_key))
+            self.close_connection = True
+            params = parse_qs(parsed.query)
+            self._handle_docker_logs_ws(cid,
+                                        tail=params.get("tail", ["200"])[0],
+                                        timestamps=params.get("timestamps", ["0"])[0] == "1")
+
+        elif path.startswith("/api/docker/ws/exec/"):
+            cid = path[len("/api/docker/ws/exec/"):]
+            if self.headers.get("Upgrade", "").lower() != "websocket":
+                self.send_json({"error": "WebSocket upgrade required"}, 426)
+                return
+            det = docker_container(cid)
+            if det.get("error"):
+                self.send_json({"error": det["error"]}, 404)
+                return
+            ws_key = self.headers.get("Sec-WebSocket-Key", "")
+            self.connection.sendall(_ws_handshake_response(ws_key))
+            self.close_connection = True
+            params = parse_qs(parsed.query)
+            self._handle_docker_exec_ws(cid,
+                                        shell=params.get("shell", ["sh"])[0],
+                                        user=params.get("user", [""])[0],
+                                        workdir=params.get("cwd", [""])[0])
+
+        elif path == "/api/docker/container/logs/download":
+            params = parse_qs(parsed.query)
+            cid = params.get("id", [""])[0]
+            if not cid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self._send_docker_logfile(cid,
+                                      tail=params.get("tail", ["5000"])[0],
+                                      timestamps=params.get("timestamps", ["1"])[0] == "1")
+
+        elif path == "/api/docker/stats":
+            self.send_json(docker_stats())
+
+        elif path == "/api/docker/job":
+            jid = parse_qs(parsed.query).get("id", [""])[0]
+            if not jid:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_job(jid))
+
+        elif path == "/api/docker/hub/search":
+            params = parse_qs(parsed.query)
+            q = params.get("q", [""])[0]
+            if not q:
+                self.send_json({"error": "q parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_hub_search(q, params.get("page", ["1"])[0]))
+
+        elif path == "/api/docker/hub/tags":
+            repo = parse_qs(parsed.query).get("repo", [""])[0]
+            if not repo:
+                self.send_json({"error": "repo parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_hub_tags(repo))
+
+        elif path == "/api/docker/prune/dryrun":
+            params = parse_qs(parsed.query)
+            types = [t for t in params.get("types", [""])[0].split(",") if t]
+            if not types:
+                self.send_json({"error": "types parameter erforderlich"}, 400)
+                return
+            self.send_json(docker_prune_dryrun(
+                types, images_all=params.get("images_all", ["0"])[0] == "1"))
+
+        elif path == "/api/docker/image/save":
+            ref = parse_qs(parsed.query).get("id", [""])[0]
+            if not ref:
+                self.send_json({"error": "id parameter erforderlich"}, 400)
+                return
+            self._send_docker_tar(lambda: docker_image_save_open(ref),
+                                  f"image-{ref}.tar")
+
+        elif path == "/api/docker/container/archive":
+            params = parse_qs(parsed.query)
+            cid  = params.get("id", [""])[0]
+            cpath = params.get("path", [""])[0]
+            if not cid or not cpath:
+                self.send_json({"error": "id und path erforderlich"}, 400)
+                return
+            self._send_docker_tar(lambda: docker_archive_open(cid, cpath),
+                                  f"{cid}-{cpath.rstrip('/').split('/')[-1] or 'root'}.tar")
+
+        elif path == "/api/docker/jobs":
+            self.send_json({"jobs": docker_jobs()})
+
+        elif path == "/api/docker/events":
+            self.send_json(docker_events(parse_qs(parsed.query).get("since", ["0"])[0]))
+
+        elif path in ("/", "/index.html"):
+            # index.html mit Cache-Busting ausliefern: app.js/app.css bekommen
+            # ?v=<mtime>. Clients, die app.js noch mit alten (Cache-Control-losen)
+            # Headern gespeichert hatten, fragten es nach Deploys gar nicht mehr an
+            # und liefen mit veraltetem Frontend (z. B. unbekannte Rolle
+            # "superadmin" → alle Admin-Reiter versteckt). Eine neue URL umgeht
+            # jeden Browser-/WebView-Cache zuverlässig.
+            try:
+                html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+                for asset in ("app.js", "app.css"):
+                    try:
+                        ver = int((STATIC_DIR / asset).stat().st_mtime)
+                    except OSError:
+                        ver = 0
+                    html = html.replace(f'"/{asset}"', f'"/{asset}?v={ver}"')
+                body = html.encode("utf-8")
+            except OSError:
+                self.send_json({"error": "index.html nicht gefunden"}, 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+            self.end_headers()
+            self.wfile.write(body)
+
         else:
-            if path == "/":
-                self.path = "/index.html"
+            self._static_asset = True
             super().do_GET()
 
     # ── POST ─────────────────────────────────────────────────────────────────
@@ -1001,7 +1575,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        content_len = int(self.headers.get("Content-Length", 0))
+        # Ein nicht-numerischer Content-Length ("abc", "1e6") warf bisher eine
+        # ValueError, die den Thread ohne HTTP-Antwort beendete.
+        try:
+            content_len = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError):
+            self.send_json({"error": "Ungültiger Content-Length-Header"}, 400)
+            return
+        if content_len < 0:
+            self.send_json({"error": "Ungültiger Content-Length-Header"}, 400)
+            return
         if content_len > 10 * 1024 * 1024:   # 10 MB Obergrenze gegen Speicher-DoS
             self.send_json({"error": "Request-Body zu groß"}, 413)
             return
@@ -1009,12 +1592,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         # Login form (no auth needed)
         if path == "/login":
-            if _login_rate_limited(self.client_address[0]):
-                self._serve_login("Zu viele Login-Versuche — bitte kurz warten.")
-                return
+            # Echte Besucher-IP statt der Proxy-Adresse: hinter dem Cloudflare
+            # Tunnel ist client_address immer der cloudflared-Container. Der
+            # Ratelimiter zaehlte dadurch alle Besucher gemeinsam, und fail2ban
+            # haette nichts Sperrbares im Protokoll gefunden.
+            peer_ip = client_ip(self)
             params = parse_qs(raw_body.decode("utf-8", errors="replace"))
             username = params.get("username", [""])[0].strip()
             password = params.get("password", [""])[0]
+
+            if _login_rate_limited(peer_ip):
+                log_auth_event("AUTHFAIL", username, peer_ip, "ratelimit")
+                self._serve_login("Zu viele Login-Versuche — bitte kurz warten.")
+                return
 
             if not username or not password:
                 self._serve_login("Benutzername und Passwort erforderlich")
@@ -1028,16 +1618,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 )
                 return
             if not result:
+                log_auth_event("AUTHFAIL", username, peer_ip, "badcreds")
                 self._serve_login("Ungültiger Benutzername oder Passwort")
                 return
 
-            role = "admin" if is_sudo_user(username) else "user"
+            log_auth_event("AUTHOK", username, peer_ip, "login")
+            role = resolve_role(username)
             token = _session_mgr.create(username, role)
             self.send_response(302)
             self.send_header("Location", "/")
             self.send_header(
                 "Set-Cookie",
-                f"session={token}; HttpOnly; Secure; Path=/; SameSite=Strict"
+                f"session={token}; HttpOnly;{self._cookie_secure()} Path=/; SameSite=Strict"
             )
             self.end_headers()
             return
@@ -1052,8 +1644,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # sodass jeder Nicht-Admin-Login VMs anlegen/löschen, Dienste stoppen,
         # Prozesse killen usw. konnte (Privilege Escalation).
         if path.startswith(("/api/vm/", "/api/network/", "/api/storage/",
-                             "/api/service/", "/api/process/", "/api/user/")):
+                             "/api/service/", "/api/process/", "/api/user/",
+                             "/api/docker/")) and path != "/api/vm/action":
             if self._require_admin():
+                return
+        # Rollenmodell: Host-Verwaltung (Netze, Storage, Dienste, Prozesse,
+        # Benutzer, Docker) und rohes VM-XML nur für Superadmins. Ausnahme:
+        # Volumes anlegen/löschen dürfen Admins für eigene VMs (Prefix-Regel,
+        # geprüft unten nach dem JSON-Parsing).
+        if path.startswith(("/api/network/", "/api/service/", "/api/process/",
+                             "/api/user/", "/api/docker/", "/api/security/")) \
+           or path in ("/api/vm/xml", "/api/vm/access", "/api/browser/access") \
+           or (path.startswith("/api/storage/")
+               and path not in ("/api/storage/volume/create", "/api/storage/volume/delete")):
+            if self._require_superadmin():
                 return
 
         # Sensible, nicht gepollte Aktion: Benutzerverwaltung zusätzlich pro IP
@@ -1064,13 +1668,52 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json({"error": "Zu viele Aktionen — bitte kurz warten."}, 429)
                 return
 
+        # Docker-Aktionen ebenso drosseln. Etwas großzügiger als bei Benutzern,
+        # weil der Erstellungsassistent und Stack-Aktionen mehrere Aufrufe kurz
+        # hintereinander auslösen. Gelesen wird ausschließlich per GET, die
+        # Drossel bremst also keine Aktualisierung.
+        if path.startswith("/api/docker/"):
+            if _action_rate_limited("docker", self.client_address[0], max_hits=60):
+                self.send_json({"error": "Zu viele Aktionen — bitte kurz warten."}, 429)
+                return
+
         try:
             data = json.loads(raw_body) if raw_body else {}
         except Exception:
             data = {}
 
+        # Admins (nicht Superadmins): nur eigene VMs, keine Host-Durchreichung
+        # (USB/PCI/virtiofs/beliebige Image-Pfade) und nur eigene Volumes.
+        if not self._is_superadmin():
+            if path == "/api/vm/action":
+                # Power-Aktionen auch für freigegebene Benutzer (Rolle egal)
+                if self._vm_denied(data.get("name", ""), "view"):
+                    return
+            elif path.startswith("/api/vm/") and path != "/api/vm/create":
+                _vmname = data.get("name", "")
+                if path in ("/api/vm/share/revoke", "/api/vm/share/extend"):
+                    _sh = _share_mgr.get_valid(data.get("id", ""))
+                    _vmname = _sh.get("vm", "") if _sh else ""
+                if self._vm_denied(_vmname):
+                    return
+            if path == "/api/vm/device/add" and \
+               data.get("kind") in ("usb_host", "pci_host", "filesystem", "disk"):
+                self.send_json({"error": "Host-Geräte/Ordner/Image-Pfade dürfen nur "
+                                         "Superadmins durchreichen"}, 403)
+                return
+            if path == "/api/vm/disk/attach" and data.get("device", "disk") != "cdrom" \
+               and not self._admin_owns_path(data.get("source_path", "")):
+                self.send_json({"error": "Nur eigene Volumes erlaubt (Dateiname muss mit "
+                                         "dem Namen einer eigenen VM beginnen)"}, 403)
+                return
+            if path in ("/api/storage/volume/create", "/api/storage/volume/delete") \
+               and not self._admin_owns_path(data.get("vol_name", "")):
+                self.send_json({"error": "Volume-Name muss mit dem Namen einer eigenen VM "
+                                         "beginnen (z. B. meinevm-data)"}, 403)
+                return
+
         if path == "/api/terminal":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             cmd = data.get("command", "")
             timeout = min(data.get("timeout", 30), 120)
             if not cmd:
@@ -1079,18 +1722,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json(_pty_session.execute(cmd, timeout))
 
         elif path == "/api/terminal/stdin":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             reply   = data.get("reply", "")
             timeout = min(data.get("timeout", 30), 120)
             self.send_json(_pty_session.send_reply(reply, timeout))
 
         elif path == "/api/terminal/interrupt":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             _pty_session.interrupt()
             self.send_json({"ok": True})
 
         elif path == "/api/update":
-            if self._require_admin(): return
+            if self._require_superadmin(): return
             self.send_json(run_update())
 
         # ── External connections ──────────────────────────────────────────────
@@ -1121,14 +1764,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             try:
                 _ext_mgr.delete(cid, owner=self._get_session_user(),
-                                is_admin=self._get_session_role() == "admin")
+                                is_admin=self._is_superadmin())
                 self.send_json({"success": True})
             except PermissionError:
                 self.send_json({"error": "Keine Berechtigung"}, 403)
 
         elif path == "/api/ext/connect":
             _u = self._get_session_user()
-            _admin = self._get_session_role() == "admin"
+            _admin = self._is_superadmin()
             cid = data.get("id", "")
             conn = _ext_mgr.get(cid, with_password=False, owner=_u, is_admin=_admin)
             if not conn:
@@ -1178,10 +1821,86 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             try:
                 _browser_mgr.stop(sid, owner=self._get_session_user(),
-                                  is_admin=self._get_session_role() == "admin")
+                                  is_admin=self._is_superadmin())
                 self.send_json({"success": True})
             except PermissionError:
                 self.send_json({"error": "Keine Berechtigung"}, 403)
+
+        # Heartbeat des KasmVNC-Clients: solange der Tab sichtbar ist, meldet er
+        # sich im Minutentakt. Bleibt er aus (Tab geschlossen oder im
+        # Hintergrund), pausiert der Idle-Wächter die Session. Kehrt der Nutzer
+        # zurück, taut derselbe Aufruf sie sofort wieder auf.
+        elif path == "/api/browser/ping":
+            sid = data.get("id", "")
+            session = _browser_mgr.get(sid, owner=self._get_session_user(),
+                                       is_admin=self._is_superadmin())
+            if not session:
+                self.send_json({"error": "Session nicht gefunden"}, 404)
+                return
+            resumed = _browser_mgr.ensure_running(sid)
+            _browser_mgr.touch(sid)
+            self.send_json({"ok": True, "resumed": resumed})
+
+        elif path in ("/api/browser/pause", "/api/browser/resume"):
+            sid = data.get("id", "")
+            if not sid:
+                self.send_json({"error": "id erforderlich"}, 400)
+                return
+            want_pause = path.endswith("/pause")
+            try:
+                if want_pause:
+                    ok = _browser_mgr.pause(sid, owner=self._get_session_user(),
+                                            is_admin=self._is_superadmin())
+                else:
+                    ok = _browser_mgr.resume(sid, owner=self._get_session_user(),
+                                             is_admin=self._is_superadmin())
+            except PermissionError:
+                self.send_json({"error": "Keine Berechtigung"}, 403)
+                return
+            if not ok:
+                self.send_json({"error": "Container reagiert nicht auf "
+                                         + ("Pause" if want_pause else "Fortsetzen")}, 502)
+                return
+            self.send_json({"success": True,
+                            "status": "paused" if want_pause else "running"})
+
+        elif path == "/api/vm/access":
+            # Superadmin: Besitzer und Sichtbarkeitsliste einer VM setzen
+            name = data.get("name", "")
+            if not name:
+                self.send_json({"error": "name erforderlich"}, 400)
+                return
+            _ure = re.compile(r'^[a-z_][a-z0-9_-]{0,31}$')
+            viewers = data.get("viewers")
+            if viewers is not None:
+                if not isinstance(viewers, list) or not all(isinstance(u, str) and _ure.match(u) for u in viewers):
+                    self.send_json({"error": "viewers muss eine Liste gültiger Benutzernamen sein"}, 400)
+                    return
+            if "owner" in data:
+                owner = (data.get("owner") or "").strip()
+                if owner and not _ure.match(owner):
+                    self.send_json({"error": "Ungültiger Besitzer"}, 400)
+                    return
+                vm_owner_set(name, owner or None)
+            cur_owner = vm_owner_get(name)
+            if viewers is not None:
+                vm_viewers_set(name, [u for u in viewers if u != cur_owner])
+            self.send_json({"success": True, "owner": cur_owner, "viewers": vm_viewers_get(name)})
+
+        elif path == "/api/browser/access":
+            # Superadmin: Sichtbarkeitsliste einer Browser-Session setzen
+            sid = data.get("id", "")
+            viewers = data.get("viewers")
+            _ure = re.compile(r'^[a-z_][a-z0-9_-]{0,31}$')
+            if not sid or not isinstance(viewers, list) or \
+               not all(isinstance(u, str) and _ure.match(u) for u in viewers):
+                self.send_json({"error": "id und viewers (Liste gültiger Benutzernamen) erforderlich"}, 400)
+                return
+            sess = _browser_mgr.set_viewers(sid, viewers)
+            if not sess:
+                self.send_json({"error": "Session nicht gefunden"}, 404)
+                return
+            self.send_json({"success": True, "viewers": sess.get("viewers", [])})
 
         elif path == "/api/vm/action":
             name = data.get("name", "")
@@ -1205,16 +1924,53 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not name:
                 self.send_json({"error": "name erforderlich"}, 400)
             else:
-                self.send_json(vm_create(name, vcpus, memory_mib, pool,
-                                         disk_size_gib, iso_path, network, machine,
-                                         os_type=os_type, virtio_iso=virtio_iso))
+                res = vm_create(name, vcpus, memory_mib, pool,
+                                disk_size_gib, iso_path, network, machine,
+                                os_type=os_type, virtio_iso=virtio_iso)
+                if res.get("success"):
+                    vm_owner_set(name, self._get_session_user())
+                self.send_json(res)
 
         elif path == "/api/vm/delete":
             name = data.get("name", "")
             if not name:
                 self.send_json({"error": "name erforderlich"}, 400)
             else:
-                self.send_json(vm_delete(name, data.get("delete_volumes", False)))
+                _r = vm_delete(name, data.get("delete_volumes", False))
+                if _r.get("success"):
+                    _share_mgr.revoke_vm(name)
+                    vm_owner_remove(name)
+                    vm_viewers_remove(name)
+                self.send_json(_r)
+
+        elif path == "/api/vm/share/create":
+            name = data.get("name", "")
+            if not name:
+                self.send_json({"error": "name erforderlich"}, 400)
+                return
+            _r = _share_mgr.create(name, self._get_session_user(), data.get("minutes"),
+                                   data.get("type", "kasmvnc"), data.get("note", ""))
+            if _r.get("share"):
+                proto = self.headers.get("X-Forwarded-Proto", "http")
+                host  = self.headers.get("Host", "localhost")
+                _r["share"]["url"] = f"{proto}://{host}/share/vm/{_r['share']['id']}"
+                print(f"[vmshare] {self._get_session_user()} hat VM {name} für "
+                      f"{_r['share']['minutes']} min freigegeben ({_r['share']['type']})", flush=True)
+            self.send_json(_r)
+
+        elif path == "/api/vm/share/revoke":
+            _r = _share_mgr.revoke(data.get("id", ""))
+            if _r.get("success"):
+                print(f"[vmshare] Freigabe widerrufen durch {self._get_session_user()}", flush=True)
+            self.send_json(_r)
+
+        elif path == "/api/vm/share/extend":
+            _r = _share_mgr.extend(data.get("id", ""), data.get("minutes"))
+            if _r.get("share"):
+                proto = self.headers.get("X-Forwarded-Proto", "http")
+                host  = self.headers.get("Host", "localhost")
+                _r["share"]["url"] = f"{proto}://{host}/share/vm/{_r['share']['id']}"
+            self.send_json(_r)
 
         elif path == "/api/vm/update":
             name = data.get("name", "")
@@ -1295,7 +2051,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if not src or not dst:
                 self.send_json({"error": "name und new_name erforderlich"}, 400)
             else:
-                self.send_json(vm_clone(src, dst))
+                res = vm_clone(src, dst)
+                if res.get("success"):
+                    vm_owner_set(dst, self._get_session_user())
+                self.send_json(res)
 
         elif path == "/api/vm/keymap":
             if self._require_admin(): return
@@ -1455,6 +2214,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json(iso_delete(p))
 
         elif path == "/api/user/create":
+            invalidate_role_cache(data.get("username", ""))
             self.send_json(create_user(
                 data.get("username", ""), data.get("password", ""),
                 is_admin=bool(data.get("is_admin")),
@@ -1468,15 +2228,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if uname == cur and is_admin is False:
                 self.send_json({"error": "Sie können sich nicht selbst die Admin-Rechte entziehen"}, 400)
             else:
-                self.send_json(update_user(uname, password=data.get("password"),
-                                           is_admin=is_admin))
+                r = update_user(uname, password=data.get("password"),
+                                is_admin=is_admin)
+                # Admin-Recht sofort wirksam machen (sonst bis zu _ROLE_TTL alt)
+                invalidate_role_cache(uname)
+                self.send_json(r)
 
         elif path == "/api/user/delete":
             uname = data.get("username", "")
             if uname == self._get_session_user():
                 self.send_json({"error": "Sie können sich nicht selbst löschen"}, 400)
             else:
-                self.send_json(delete_user(uname, remove_home=bool(data.get("remove_home", True))))
+                r = delete_user(uname, remove_home=bool(data.get("remove_home", True)))
+                invalidate_role_cache(uname)
+                self.send_json(r)
+
+        elif path == "/api/security/unban":
+            if self._require_superadmin(): return
+            if _action_rate_limited("security", client_ip(self), max_hits=20):
+                self.send_json({"success": False, "error": "Zu viele Aktionen — bitte kurz warten."}, 429)
+                return
+            self.send_json(security_unban(data.get("ip", ""), self._get_session_user()))
 
         elif path == "/api/service/action":
             name = data.get("name", "")
@@ -1523,8 +2295,441 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             subpath = parts[1] if len(parts) > 1 else ""
             self._kasmvnc_http_proxy(sid, subpath, parsed.query)
 
+        # ── Docker-Verwaltung (schreibend) ────────────────────────────────────
+        # Admin-Gate und Drossel greifen bereits oben über das Prefix.
+        elif path == "/api/docker/container/action":
+            cid    = data.get("id", "")
+            action = data.get("action", "")
+            if not cid or not action:
+                self.send_json({"error": "id und action erforderlich"}, 400)
+            else:
+                self._dk_send(docker_container_action(
+                    cid, action,
+                    signal=data.get("signal", ""),
+                    timeout=data.get("timeout", 10)))
+
+        elif path == "/api/docker/container/create":
+            image = data.get("image", "")
+            if not image:
+                self.send_json({"error": "image erforderlich"}, 400)
+            else:
+                self.send_json(docker_container_create(
+                    image, name=data.get("name", ""), cmd=data.get("cmd", ""),
+                    entrypoint=data.get("entrypoint", ""),
+                    ports=data.get("ports") or [], volumes=data.get("volumes") or [],
+                    env=data.get("env") or [], labels=data.get("labels") or [],
+                    network=data.get("network", ""),
+                    restart=data.get("restart", "no"),
+                    memory_mb=data.get("memory_mb"), cpus=data.get("cpus"),
+                    user=data.get("user", ""), workdir=data.get("workdir", ""),
+                    privileged=bool(data.get("privileged", False)),
+                    tty=bool(data.get("tty", False)),
+                    cap_add=data.get("cap_add") or [],
+                    start=bool(data.get("start", True))))
+
+        elif path == "/api/docker/container/remove":
+            cid = data.get("id", "")
+            if not cid:
+                self.send_json({"error": "id erforderlich"}, 400)
+            else:
+                self._dk_send(docker_container_remove(
+                    cid,
+                    force=bool(data.get("force", False)),
+                    volumes=bool(data.get("volumes", False))))
+
+        elif path == "/api/docker/container/rename":
+            cid  = data.get("id", "")
+            name = data.get("name", "")
+            if not cid or not name:
+                self.send_json({"error": "id und name erforderlich"}, 400)
+            else:
+                self._dk_send(docker_container_rename(cid, name))
+
+        elif path == "/api/docker/container/update":
+            cid = data.get("id", "")
+            if not cid:
+                self.send_json({"error": "id erforderlich"}, 400)
+            else:
+                self._dk_send(docker_container_update(
+                    cid,
+                    policy=data.get("policy"),
+                    max_retry=data.get("max_retry", 0),
+                    memory_mb=data.get("memory_mb"),
+                    memory_swap_mb=data.get("memory_swap_mb"),
+                    cpus=data.get("cpus"),
+                    cpu_shares=data.get("cpu_shares"),
+                    cpuset=data.get("cpuset")))
+
+        elif path == "/api/docker/image/pull":
+            repo = data.get("repo", "")
+            if not repo:
+                self.send_json({"error": "repo erforderlich"}, 400)
+            else:
+                self.send_json(docker_image_pull(repo, data.get("tag", "latest")))
+
+        elif path == "/api/docker/image/build":
+            ctx = data.get("context", "")
+            tag = data.get("tag", "")
+            if not ctx or not tag:
+                self.send_json({"error": "context und tag erforderlich"}, 400)
+            else:
+                self.send_json(docker_image_build(
+                    ctx, tag,
+                    dockerfile=data.get("dockerfile", "Dockerfile"),
+                    nocache=bool(data.get("nocache", False)),
+                    buildargs=data.get("buildargs") or {}))
+
+        elif path == "/api/docker/image/remove":
+            ref = data.get("id", "")
+            if not ref:
+                self.send_json({"error": "id erforderlich"}, 400)
+            else:
+                self.send_json(docker_image_remove(
+                    ref, force=bool(data.get("force", False)),
+                    noprune=bool(data.get("noprune", False))))
+
+        elif path == "/api/docker/image/tag":
+            ref  = data.get("id", "")
+            repo = data.get("repo", "")
+            if not ref or not repo:
+                self.send_json({"error": "id und repo erforderlich"}, 400)
+            else:
+                self.send_json(docker_image_tag(ref, repo, data.get("tag", "latest")))
+
+        elif path == "/api/docker/network/create":
+            name = data.get("name", "")
+            if not name:
+                self.send_json({"error": "name erforderlich"}, 400)
+            else:
+                self.send_json(docker_network_create(
+                    name, driver=data.get("driver", "bridge"),
+                    subnet=data.get("subnet", ""), gateway=data.get("gateway", ""),
+                    ip_range=data.get("ip_range", ""),
+                    internal=bool(data.get("internal", False)),
+                    ipv6=bool(data.get("ipv6", False)),
+                    parent=data.get("parent", ""),
+                    options=data.get("options") or {},
+                    labels=data.get("labels") or {}))
+
+        elif path == "/api/docker/network/remove":
+            nid = data.get("id", "")
+            if not nid:
+                self.send_json({"error": "id erforderlich"}, 400)
+            else:
+                self.send_json(docker_network_remove(nid))
+
+        elif path == "/api/docker/network/connect":
+            nid = data.get("id", "")
+            ctr = data.get("container", "")
+            if not nid or not ctr:
+                self.send_json({"error": "id und container erforderlich"}, 400)
+            else:
+                self._dk_send(docker_network_connect(
+                    nid, ctr, ipv4=data.get("ipv4", ""), ipv6=data.get("ipv6", ""),
+                    aliases=data.get("aliases") or []))
+
+        elif path == "/api/docker/network/disconnect":
+            nid = data.get("id", "")
+            ctr = data.get("container", "")
+            if not nid or not ctr:
+                self.send_json({"error": "id und container erforderlich"}, 400)
+            else:
+                self._dk_send(docker_network_disconnect(
+                    nid, ctr, force=bool(data.get("force", False))))
+
+        elif path == "/api/docker/volume/create":
+            name = data.get("name", "")
+            if not name:
+                self.send_json({"error": "name erforderlich"}, 400)
+            else:
+                self.send_json(docker_volume_create(
+                    name, driver=data.get("driver", "local"),
+                    options=data.get("options") or {},
+                    labels=data.get("labels") or {}))
+
+        elif path == "/api/docker/volume/remove":
+            name = data.get("name", "")
+            if not name:
+                self.send_json({"error": "name erforderlich"}, 400)
+            else:
+                self.send_json(docker_volume_remove(
+                    name, force=bool(data.get("force", False))))
+
+        elif path == "/api/docker/prune":
+            types = data.get("types") or []
+            if not types:
+                self.send_json({"error": "types erforderlich"}, 400)
+            else:
+                self.send_json(docker_prune(
+                    types, images_all=bool(data.get("images_all", False))))
+
+        elif path == "/api/docker/container/commit":
+            cid  = data.get("id", "")
+            repo = data.get("repo", "")
+            if not cid or not repo:
+                self.send_json({"error": "id und repo erforderlich"}, 400)
+            else:
+                self.send_json(docker_container_commit(
+                    cid, repo, tag=data.get("tag", "latest"),
+                    message=data.get("message", ""), author=data.get("author", ""),
+                    pause=bool(data.get("pause", True))))
+
+        elif path == "/api/docker/container/upload":
+            cid = data.get("id", "")
+            if not cid:
+                self.send_json({"error": "id erforderlich"}, 400)
+            else:
+                self._dk_send(docker_archive_put(
+                    cid, data.get("path", ""), data.get("name", ""),
+                    data.get("data_b64", "")))
+
+        elif path == "/api/docker/stack/action":
+            proj   = data.get("project", "")
+            action = data.get("action", "")
+            if not proj or not action:
+                self.send_json({"error": "project und action erforderlich"}, 400)
+            else:
+                self.send_json(docker_stack_action(proj, action))
+
         else:
             self.send_json({"error": "Not found"}, 404)
+
+    def _handle_docker_logs_ws(self, cid, tail=200, timestamps=False):
+        """Container-Logs über einen bereits aufgerüsteten WebSocket folgen.
+
+        Aufbau wie `_handle_ssh_ws`: ein Lese-Thread schiebt die Docker-Frames
+        als Binärframes zum Browser, die Hauptschleife wartet auf das
+        Close-Frame. Ein in `resp.read()` geparkter Leser wird über
+        `_docker_stream_close` (socket shutdown) geweckt — ohne das bliebe der
+        Thread bis zum TCP-Timeout hängen."""
+        sock = self.connection
+        sock.settimeout(None)
+
+        if not _ws_slot_take("log"):
+            _ws_send(sock, "\r\nZu viele offene Log-Ansichten — bitte eine andere "
+                           "schließen.\r\n", opcode=0x01)
+            return
+
+        conn = None
+        try:
+            conn, resp = docker_logs_open(cid, tail=tail, timestamps=timestamps,
+                                          follow=True)
+        except Exception as e:
+            _ws_send(sock, f"\r\nFehler: {e}\r\n", opcode=0x01)
+            _ws_slot_free("log")
+            return
+
+        alive = threading.Event()
+        alive.set()
+
+        def docker_to_ws():
+            try:
+                for _sid, payload in _docker_frames(resp):
+                    if not alive.is_set():
+                        break
+                    if not _ws_send(sock, payload, opcode=0x02):
+                        break
+            except Exception:
+                pass
+            finally:
+                alive.clear()
+                try:
+                    _ws_send(sock, b"", opcode=0x08)
+                except Exception:
+                    pass
+
+        reader = threading.Thread(target=docker_to_ws, daemon=True)
+        reader.start()
+
+        try:
+            while alive.is_set():
+                opcode, data = _ws_recv(sock)
+                if opcode is None or opcode == 0x08:
+                    break
+                # Textframes sind für spätere Steuerbefehle reserviert; der
+                # Client baut für Tail-/Timestamp-Wechsel neu auf.
+        except Exception:
+            pass
+        finally:
+            alive.clear()
+            _docker_stream_close(conn)
+            reader.join(timeout=2)
+            _ws_slot_free("log")
+
+    def _handle_docker_exec_ws(self, cid, shell="sh", user="", workdir=""):
+        """Interaktive Container-Shell über einen aufgerüsteten WebSocket.
+
+        Gleiches Protokoll wie das Host-Terminal (`_handle_local_pty_ws`):
+        Binärframes tragen rohe Terminal-Bytes, ein Textframe mit
+        {"type":"resize"} zieht die Fenstergröße nach."""
+        sock = self.connection
+        sock.settimeout(None)
+
+        if not _ws_slot_take("exec"):
+            _ws_send(sock, "\r\nZu viele offene Konsolen — bitte eine andere "
+                           "schließen.\r\n", opcode=0x02)
+            return
+
+        try:
+            eid, dsock, leftover = docker_exec_open(cid, shell=shell, user=user,
+                                                    workdir=workdir)
+        except Exception as e:
+            _ws_send(sock, f"\r\nFehler: {e}\r\n".encode(), opcode=0x02)
+            _ws_slot_free("exec")
+            return
+
+        # Beim Hijack können bereits Nutzdaten hinter den Headern liegen —
+        # ohne diese Zeile fehlte die erste Ausgabe der Shell.
+        # Scheitert der Start (fehlende Shell, falsches Verzeichnis), steht die
+        # englische OCI-Meldung genau hier — die wird übersetzt.
+        _erste_daten = [True]
+        if leftover:
+            de = docker_exec_message_de(leftover, shell, workdir, user)
+            _ws_send(sock, de or leftover, opcode=0x02)
+            if de:
+                _erste_daten[0] = False
+
+        alive = threading.Event()
+        alive.set()
+
+        def docker_to_ws():
+            while alive.is_set():
+                try:
+                    r, _, _ = select.select([dsock], [], [], 0.04)
+                    if r:
+                        data = dsock.recv(8192)
+                        if not data:
+                            break
+                        if _erste_daten[0]:
+                            _erste_daten[0] = False
+                            de = docker_exec_message_de(data, shell, workdir, user)
+                            if de:
+                                data = de
+                        if not _ws_send(sock, data, opcode=0x02):
+                            break
+                except (OSError, ValueError):
+                    break
+                except Exception:
+                    break
+            alive.clear()
+            try:
+                _ws_send(sock, b"", opcode=0x08)
+            except Exception:
+                pass
+
+        reader = threading.Thread(target=docker_to_ws, daemon=True)
+        reader.start()
+
+        try:
+            while alive.is_set():
+                opcode, data = _ws_recv(sock)
+                if opcode is None or opcode == 0x08:
+                    break
+                if opcode == 0x01 and data:          # Steuerframe (JSON)
+                    try:
+                        msg = json.loads(data.decode("utf-8", errors="replace"))
+                        if msg.get("type") == "resize":
+                            docker_exec_resize(eid, msg.get("rows", 24),
+                                               msg.get("cols", 80))
+                    except Exception:
+                        pass
+                elif opcode == 0x02 and data:        # rohe Tastatureingabe
+                    try:
+                        dsock.sendall(data)
+                    except OSError:
+                        break
+        except Exception:
+            pass
+        finally:
+            alive.clear()
+            try:
+                dsock.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                dsock.close()
+            except Exception:
+                pass
+            reader.join(timeout=2)
+            # Docker lässt die Shell im Zielcontainer weiterlaufen, wenn die
+            # Verbindung abreißt. Ohne dieses Aufräumen bliebe bei jedem
+            # Tab-Wechsel eine Shell in einem produktiven Container zurück.
+            try:
+                docker_exec_cleanup(eid)
+            except Exception:
+                pass
+            _ws_slot_free("exec")
+
+    def _send_docker_tar(self, opener, filename):
+        """Einen Tar-Strom von Docker an den Browser durchreichen.
+
+        Bewusst gestreamt statt komplett gepuffert: ein Image-Export kann
+        mehrere Hundert MB groß sein."""
+        conn = None
+        try:
+            conn, resp = opener()
+        except Exception as e:
+            self.send_json({"error": str(e)}, 404)
+            return
+        safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(filename))[:96] or "export.tar"
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-tar")
+            self.send_header("Content-Disposition", f'attachment; filename="{safe}"')
+            clen = resp.getheader("Content-Length")
+            if clen:
+                self.send_header("Content-Length", clen)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except Exception:
+            self.close_connection = True
+        finally:
+            if conn is not None:
+                _docker_stream_close(conn)
+
+    def _send_docker_logfile(self, cid, tail=5000, timestamps=True):
+        """Logs als Textdatei zum Herunterladen ausliefern."""
+        conn = None
+        try:
+            conn, resp = docker_logs_open(cid, tail=tail, timestamps=timestamps,
+                                          follow=False)
+        except Exception as e:
+            self.send_json({"error": str(e)}, 404)
+            return
+        try:
+            parts, total = [], 0
+            for _sid, payload in _docker_frames(resp):
+                parts.append(payload)
+                total += len(payload)
+                if total > 16 * 1024 * 1024:
+                    parts.append(b"\n[... gekuerzt bei 16 MB ...]\n")
+                    break
+            body = b"".join(parts)
+            safe = re.sub(r'[^A-Za-z0-9_.-]', '_', str(cid))[:64]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="docker-{safe}.log"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception:
+            pass
+        finally:
+            if conn is not None:
+                _docker_stream_close(conn)
+
+    def _dk_send(self, result):
+        """Docker-Antwort senden. Der Selbstschutz (`protected`) geht als 403
+        raus, alles andere folgt der Hauskonvention: HTTP 200 + `.error`."""
+        self.send_json(result, 403 if isinstance(result, dict)
+                               and result.get("protected") else 200)
 
     def _handle_local_pty_ws(self):
         """Serve a dedicated bash PTY over an already-upgraded WebSocket.
@@ -1538,15 +2743,53 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             _ws_send(sock, f"\r\nFehler: PTY konnte nicht erstellt werden: {exc}\r\n".encode())
             return
 
+        # Fenstergröße des Browsers abwarten, BEVOR bash startet: sonst zeichnet
+        # die Shell ihre erste Ausgabe (Prompt, Motd) in 80x24 und alles, was
+        # schon gedruckt ist, bleibt falsch umbrochen stehen.
+        cols, rows = 80, 24
+        pending_input = b""
         try:
-            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+            ready, _, _ = select.select([sock], [], [], 1.5)
+            if ready:
+                op, first = _ws_recv(sock)
+                if op == 0x01 and first:
+                    try:
+                        msg = json.loads(first.decode('utf-8', errors='replace'))
+                        if msg.get('type') == 'resize':
+                            cols = max(10, min(500, int(msg.get('cols', 80))))
+                            rows = max(2,  min(200, int(msg.get('rows', 24))))
+                    except Exception:
+                        pass
+                elif op == 0x02 and first:
+                    pending_input = first
+                elif op is None or op == 0x08:
+                    try: os.close(master); os.close(slave)
+                    except OSError: pass
+                    return
+        except Exception:
+            pass
+
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
         except OSError:
             pass
 
         env = dict(os.environ)
         env['TERM']      = 'xterm-256color'
         env['COLORTERM'] = 'truecolor'
-        env.setdefault('LANG', 'en_US.UTF-8')
+        env['SHELL']     = '/bin/bash'
+        env['HOME']      = '/root'
+        env['USER']      = 'root'
+        env['LOGNAME']   = 'root'
+        env['PWD']       = '/root'
+        # Ohne UTF-8-Locale liefern ls/ncurses ASCII-Ersatzzeichen statt Rahmen
+        # und Umlauten. en_US.UTF-8 ist NICHT überall erzeugt, C.UTF-8 schon —
+        # eine vorhandene UTF-8-Einstellung bleibt unangetastet.
+        if 'UTF-8' not in env.get('LANG', '').upper().replace('UTF8', 'UTF-8'):
+            env['LANG'] = 'C.UTF-8'
+        env.pop('LC_ALL', None)
+        for _v in ('PYTHONPATH', 'PYTHONUNBUFFERED', 'PYTHON_VERSION', 'GPG_KEY', 'DASH_PORT'):
+            env.pop(_v, None)
 
         def _child_setup():
             os.setsid()
@@ -1558,8 +2801,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except OSError:
                 pass
 
+        # `env --chdir` wechselt das Verzeichnis ERST, nachdem nsenter den
+        # Namensraum gewechselt hat. Ohne das erbt bash das Container-Verzeichnis
+        # (/app), das im Host-Namensraum nicht existiert — die Sitzung begrüßt
+        # den Benutzer dann mit »getcwd() failed« und `pwd`, Tab-Vervollständigung
+        # sowie relative Pfade schlagen fehl. (nsenter --wd=… hilft nicht: es
+        # wechselt VOR dem Namensraum-Wechsel.)
         proc = None
-        for cmd in [_ns(['bash', '-i']), ['bash', '-i']]:
+        candidates = [
+            _ns(['env', '--chdir=/root', 'bash', '-i']),
+            _ns(['bash', '-i']),
+            ['bash', '-i'],
+        ]
+        for cmd in candidates:
             try:
                 proc = subprocess.Popen(
                     cmd, stdin=slave, stdout=slave, stderr=slave,
@@ -1582,6 +2836,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         fl = fcntl.fcntl(master, fcntl.F_GETFL)
         fcntl.fcntl(master, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
+        if pending_input:
+            try: os.write(master, pending_input)
+            except OSError: pass
 
         alive = threading.Event()
         alive.set()
@@ -1631,12 +2889,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             pass
         finally:
             alive.clear()
-            try: proc.terminate()
-            except Exception: pass
+            # Die ganze Sitzung (bash + alles, was es gestartet hat) beenden —
+            # `terminate()` allein lässt Kindprozesse wie top/tail als Waisen zurück.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGHUP)
+            except Exception:
+                try: proc.terminate()
+                except Exception: pass
             try: proc.wait(timeout=2)
             except Exception:
-                try: proc.kill()
-                except Exception: pass
+                try: os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    try: proc.kill()
+                    except Exception: pass
             try: os.close(master)
             except OSError: pass
 

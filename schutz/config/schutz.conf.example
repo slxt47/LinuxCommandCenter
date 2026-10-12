@@ -1,0 +1,76 @@
+# /etc/linux-dashboard/schutz.conf -- Schutz-Paket des Linux Dashboards
+# (fail2ban + IDS-Waechter + Firewall-Sperrlisten).
+#
+# Diese Datei gehoert DIR: Updates aendern hier keine Werte, sie haengen nur
+# neue Schluessel (mit Standardwert) unten an. Nach einer Aenderung:
+#     waechter config-anwenden
+#
+# Format: KEY="wert" (Shell-Syntax, keine Leerzeichen um das =).
+# KEINE Kommentare hinter Werten.
+
+# --- Netz -------------------------------------------------------------------
+# Internet-Interface. "auto" = Interface der Standardroute.
+WAN_IF="auto"
+
+# Eigene oeffentliche Adressen/Netze des Servers (werden nie gesperrt und
+# bilden HOME_NET fuer Suricata). "auto" = alle globalen Adressen auf WAN_IF,
+# IPv6 als /64.
+SERVER_NETZE="auto"
+
+# Interne Netze: werden nie gesperrt, gelten fuer Suricata als "innen".
+INTERNE_NETZE="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 fd7a:115c:a1e0::/48"
+
+# Eigene Anschluesse (Admin-IPs). Werden NIE gesperrt - weder von fail2ban
+# noch vom IDS. Leerzeichen-getrennt, IPs oder Netze.
+# Dringend empfohlen: sshd-invalid sperrt schon nach EINEM Fehlversuch.
+TRUSTED_IPS=""
+
+# Interfaces, auf denen die Firewall nie sperrt (Notfallzugang, Container,
+# VMs). "+" ist Platzhalter wie bei iptables.
+RUHIGE_INTERFACES="lo tailscale0 docker0 br-+ virbr+"
+
+# --- Firewall ---------------------------------------------------------------
+# eigen = waechter-firewall.service legt die Ketten WAECHTER-* an und haengt
+#         die Sperrlisten (ipsets) in INPUT/OUTPUT/FORWARD und DOCKER-USER ein.
+# aus   = die Sperrlisten werden von einer bestehenden Firewall eingebunden
+#         (z. B. eigenes audit-firewall.sh). Der Waechter legt dann nur die
+#         ipsets an.
+FIREWALL="eigen"
+
+# --- Push-Meldungen (ntfy) --------------------------------------------------
+# Leer lassen = keine Pushes (alles wird trotzdem protokolliert).
+NTFY_URL=""
+NTFY_TOPIC=""
+NTFY_TOKEN=""
+# Optional: interne Adresse des ntfy-Servers, die zuerst probiert wird - z. B.
+# wenn ntfy hinter demselben Tunnel haengt, dessen Ausfall gemeldet werden soll.
+NTFY_URL_LOKAL=""
+
+# --- fail2ban ---------------------------------------------------------------
+# SSH-Sperrdauer (sshd + sshd-invalid)
+SSH_BANTIME="1w"
+# Dauersperre: dritte Sperre einer IP innerhalb dieser Tage = dauerhaft
+DAUERSPERRE_TAGE="90"
+# Wie lange fail2ban sich Sperren merkt (fuer Wiederholungstaeter)
+F2B_DBPURGEAGE="90d"
+
+# --- Cloudflare (optional) ---------------------------------------------------
+# 0 = kein Cloudflare (Standard): gesperrt wird per ipset direkt am Server.
+# 1 = Web-Anwendungen liegen hinter Cloudflare (Tunnel/Proxy): zusaetzlich
+#     Sperre am Cloudflare-Rand (Zugangsdaten in /etc/fail2ban/cloudflare.local,
+#     danach cf-ban-setup.sh), und das IDS sperrt Cloudflare-Netze nie.
+CLOUDFLARE="0"
+
+# --- IDS (Suricata) ---------------------------------------------------------
+# 1 = Suricata + IDS-Waechter installieren und betreiben, 0 = nur fail2ban
+IDS_AKTIV="1"
+# Suricata-Threads auf dem Interface. "auto" = halbe Kernzahl, 1..4
+IDS_THREADS="auto"
+# Ressourcen-Deckel fuer Suricata (systemd)
+IDS_CPU_QUOTA="400%"
+IDS_MEMORY_MAX="8G"
+# Ubuntu: aktuelle Suricata-Version aus dem OISF-PPA statt der Distribution
+SURICATA_PPA="1"
+# Weitere Netze, die das IDS nie sperrt (zusaetzlich zu Cloudflare, den
+# eigenen/internen Netzen, TRUSTED_IPS, den System-Resolvern).
+IDS_WHITELIST_EXTRA=""

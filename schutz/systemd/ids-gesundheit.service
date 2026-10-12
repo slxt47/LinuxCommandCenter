@@ -1,0 +1,6 @@
+[Unit]
+Description=IDS-Waechter Gesundheitspruefung (Neustart/Selbstheilung, Push bei Problem)
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/ids-gesundheit.py
+TimeoutStartSec=10min

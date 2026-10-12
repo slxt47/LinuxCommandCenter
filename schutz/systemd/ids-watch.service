@@ -1,0 +1,14 @@
+# Linux-Dashboard-Schutz: IDS-Waechter
+[Unit]
+Description=IDS-Waechter: Suricata-Alarme auswerten, Sperren an fail2ban melden
+After=suricata.service fail2ban.service
+Wants=suricata.service
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/sbin/ids-watch.py
+Restart=always
+RestartSec=10
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

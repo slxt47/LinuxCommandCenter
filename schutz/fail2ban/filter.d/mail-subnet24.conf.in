@@ -1,0 +1,29 @@
+# fail2ban-Filter (Linux-Dashboard-Schutz): wie mail-unknownuser, aber die
+# Fehlversuche werden je /24-NETZ gezaehlt statt je Einzel-IP.
+#
+# Gegen verteilte Botnetze (Phase 1: 31 IPs aus zwei /24, je IP nur ein
+# Versuch alle ~4 h) zaehlt fail2ban pro IP nie bis 3. Pro /24 kamen dagegen
+# bis zu 20 Versuche in 10 Minuten an.
+#
+# Technik: <F-ID> fasst die ersten drei Oktette als Fehler-ID; die Action
+# ergaenzt "0/24" (siehe action.d/audit-ipset-net.conf). Eigene und private
+# Netze sind ueber die negative Vorausschau ausgeschlossen, weil ignoreip
+# fuer eine Nicht-IP-ID nicht zuverlaessig greift.
+# NUR IPv4 (die Mailserver laufen mit inet_protocols=ipv4).
+
+[INCLUDES]
+before = common.conf
+
+[Definition]
+# Eigene /24-Praefixe des Servers (vom Installer aus SERVER_NETZE erzeugt).
+# Eigene Ergaenzung: filter.d/mail-subnet24.local mit _eigen = ...
+_eigen = @@EIGENE_V4_PRAEFIXE@@
+_daemon = (?:dovecot(?:-auth)?|auth)
+prefregex = ^%(__prefix_line)s(?:dovecot: )?auth(?:-worker)?(?:\([^\)]+\))?: <F-CONTENT>.+</F-CONTENT>$
+
+_private = (?:10\.|127\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|%(_eigen)s)
+failregex = ^[a-z\-]{3,15}\([^,\)]*,(?!%(_private)s)<F-ID>\d{1,3}\.\d{1,3}\.\d{1,3}\.</F-ID>\d{1,3}(?:,\S*)?\): (?:unknown user\b|Empty username\b|Username character disallowed by auth_username_chars\b)
+
+ignoreregex =
+
+datepattern = {^LN-BEG}

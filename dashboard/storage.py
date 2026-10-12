@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -264,5 +263,5 @@ def execute_command(cmd, timeout=30):
     return {"success": False, "returncode": 127, "stdout": "", "stderr": "bash nicht gefunden"}
 
 
-# ─── HTTP Request Handler ───────────────────────────────────────────────────
+# ─── Docker-Verwaltung ───────────────────────────────────────────────────────
 

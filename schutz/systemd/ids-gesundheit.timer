@@ -1,0 +1,7 @@
+[Unit]
+Description=IDS-Waechter alle 5 min pruefen
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target

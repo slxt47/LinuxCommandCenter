@@ -1,0 +1,7 @@
+# /etc/ids-watch.whitelist -- Gegenstellen, die der IDS-Waechter nie sperrt.
+# Eine IP oder ein Netz je Zeile, Kommentar nach #.
+# Cloudflare, die eigenen und internen Netze, TRUSTED_IPS und die
+# System-Resolver sind bereits fest eingebaut.
+#
+# Beispiel:
+# 203.0.113.10/32   # Backup-Ziel

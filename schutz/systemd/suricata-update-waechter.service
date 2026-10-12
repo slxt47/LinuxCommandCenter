@@ -1,0 +1,10 @@
+# Linux-Dashboard-Schutz: Suricata-Regeln (ET Open) aktualisieren und neu laden.
+[Unit]
+Description=Suricata-Regeln aktualisieren (ET Open) und neu laden
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+# suricata-update testet die neuen Regeln gegen die Konfig, bevor es sie schreibt.
+ExecStart=/usr/bin/suricata-update --suricata-conf /etc/suricata/suricata-ids.yaml
+ExecStartPost=-/bin/systemctl reload-or-restart suricata.service

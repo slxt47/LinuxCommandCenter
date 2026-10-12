@@ -1,0 +1,328 @@
+# ===========================================================================
+# linux-dashboard-schutz -- Jails (Datei gehoert dem Paket, Updates ueberschreiben sie)
+#
+# EIGENE ANPASSUNGEN NICHT HIER, sondern in /etc/fail2ban/jail.d/waechter.local
+# (wird beim Installieren einmal aus der Vorlage angelegt und nie
+# ueberschrieben). Dort genuegt es, die abweichenden Schluessel zu nennen,
+# z. B. "enabled = true" und "logpath = ..." fuer eine Web-Jail.
+#
+# ignoreip wird vom Installer aus /etc/linux-dashboard/schutz.conf erzeugt
+# (eigene + interne Netze + TRUSTED_IPS). Neu erzeugen: waechter config-anwenden
+#
+# Bewusst KEIN [DEFAULT]-Block: der gaelte global und veraenderte auch Jails,
+# die nicht zum Waechter gehoeren. Jede Jail traegt ihre Werte selbst.
+# KEINE Kommentare hinter Werten: fail2ban uebernimmt sie als Teil des Werts,
+# und "fail2ban-client -t" merkt das nicht.
+# ===========================================================================
+
+# --- SSH ---------------------------------------------------------------------
+# Sperre per ipset (audit-ipset) statt eigener f2b-Kette: wirkt auch dann,
+# wenn eine Firewall Port 22 vorne akzeptiert. Keine Push je Sperre (Scanner
+# erzeugen dutzende am Tag); Dauersperren werden gemeldet.
+[sshd]
+enabled   = true
+backend   = systemd
+journalmatch = _COMM=sshd + _COMM=sshd-session
+findtime  = 1h
+maxretry  = 3
+bantime   = @@SSH_BANTIME@@
+ignoreip  = @@IGNOREIP@@
+action    = audit-ipset
+
+# Unbekannte Benutzer, Protokollfehler, Pre-Auth-Abbrueche: schon EIN Versuch
+# sperrt. Deshalb die eigenen Anschluesse in TRUSTED_IPS eintragen!
+[sshd-invalid]
+enabled   = true
+filter    = sshd[mode=aggressive]
+backend   = systemd
+journalmatch = _COMM=sshd + _COMM=sshd-session
+maxretry  = 1
+findtime  = 10m
+bantime   = @@SSH_BANTIME@@
+ignoreip  = @@IGNOREIP@@
+action    = audit-ipset
+
+# --- Dauersperre ---------------------------------------------------------------
+# Dritte Sperre einer IP innerhalb von findtime = dauerhaft gesperrt. Zaehlt die
+# "Ban"-Meldungen der anderen Jails in /var/log/fail2ban.log (Prinzip recidive).
+# Welche Jails zaehlen: filter.d/dauersperre.conf bzw. dauersperre-web.conf.
+# Der Zaehler (1. und 2. Sperre) lebt im Speicher und beginnt nach einem
+# Neustart von fail2ban neu; verhaengte Dauersperren bleiben (Datenbank).
+# Freigabe: webauth-unban.sh <ip>
+[dauersperre]
+enabled  = true
+filter   = dauersperre
+logpath  = /var/log/fail2ban.log
+backend  = auto
+maxretry = 3
+findtime = @@DAUERSPERRE_FINDTIME@@
+bantime  = -1
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset-perm
+           ntfy-dauersperre[herkunft="SSH/Mail", prio="default"]
+
+# Web-Logins: Sperre per ipset; mit CLOUDFLARE=1 zusaetzlich am Cloudflare-Rand.
+[dauersperre-web]
+enabled  = true
+filter   = dauersperre-web
+logpath  = /var/log/fail2ban.log
+backend  = auto
+maxretry = 3
+findtime = @@DAUERSPERRE_FINDTIME@@
+bantime  = -1
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset-perm
+           ntfy-dauersperre[herkunft="Web-Login", prio="high"]
+           @@CF_BLOCK@@
+
+# --- IDS-Waechter --------------------------------------------------------------
+# Suricata -> ids-watch.py -> /var/log/ids-watch.log -> diese Jails -> ipset
+# ids_ban4/6 (Quelle UND Ziel gesperrt). Der Waechter filtert bereits
+# (Kategorie, Schwere, Richtung, Whitelist inkl. Cloudflare); ignoreip ist
+# die zweite Sicherung.
+[ids-angriff]
+enabled  = @@IDS_ENABLED@@
+filter   = ids-watch[art=IDS-ANGRIFF]
+logpath  = /var/log/ids-watch.log
+backend  = auto
+maxretry = 1
+findtime = 1h
+bantime  = 1d
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 4w
+action   = audit-ipset-ids[name=ids-angriff]
+           audit-ipset-ids[name=ids-angriff6, family=inet6]
+ignoreip = @@IDS_IGNOREIP@@
+
+[ids-ausgang]
+enabled  = @@IDS_ENABLED@@
+filter   = ids-watch[art=IDS-AUSGANG]
+logpath  = /var/log/ids-watch.log
+backend  = auto
+maxretry = 1
+findtime = 1h
+bantime  = 1w
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 8w
+action   = audit-ipset-ids[name=ids-ausgang]
+           audit-ipset-ids[name=ids-ausgang6, family=inet6]
+           ntfy-ids[titel="IDS: verdaechtige Verbindung NACH AUSSEN", prio=urgent, hinweis="Server/Container hat ein Malware-/C2-/Mining-Ziel kontaktiert - Ziel ist gesperrt, Herkunft siehe /var/log/ids-watch.log."]
+ignoreip = @@IDS_IGNOREIP@@
+
+# --- Mail (docker-mailserver / Postfix+Dovecot) -- standardmaessig AUS ----------
+# Einschalten in waechter.local: enabled = true, logpath = <mail.log>.
+# Mehrere Mailserver: je Instanz eine eigene Jail dovecot-<name> anlegen
+# (Vorlage siehe waechter.local) - die zaehlen fuer die Dauersperre mit.
+# ACHTUNG maxretry 3: ein Mailprogramm mit altem Passwort sperrt die eigene
+# Adresse in Sekunden. Freigabe: webauth-unban.sh <ip>
+[dovecot]
+enabled  = false
+logpath  = /var/log/mail.log
+port     = 993,465,submission
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 1
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy
+
+# Postfix prueft Passwoerter ueber Dovecot -> jede Postfix-Sperre faellt mit
+# der Dovecot-Sperre zusammen. Deshalb nur ipset, keine Push.
+[postfix-sasl]
+enabled  = false
+filter   = postfix[mode=auth]
+logpath  = /var/log/mail.log
+port     = smtp,465,submission
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 1
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+
+# Nur NICHT existierende Benutzernamen: 3 in 1 Tag -> 1 Tag, steigend bis 4
+# Wochen. Faengt verteilte Botnetze (1 Versuch je IP alle paar Stunden). Ein
+# Geraet mit altem Passwort erzeugt "Password mismatch" und zaehlt hier nie.
+[mail-unknownuser]
+enabled  = false
+filter   = mail-unknownuser
+logpath  = /var/log/mail.log
+backend  = auto
+maxretry = 3
+findtime = 1d
+bantime  = 1d
+bantime.increment = true
+bantime.factor    = 1
+bantime.maxtime   = 4w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset-long
+
+# Dieselben Ereignisse je /24: 8 in 1 Tag -> ganzes Netz 1 Woche, bis 8 Wochen.
+# Nur IPv4.
+[mail-subnet24]
+enabled  = false
+filter   = mail-subnet24
+logpath  = /var/log/mail.log
+backend  = auto
+maxretry = 8
+findtime = 1d
+bantime  = 1w
+bantime.increment = true
+bantime.factor    = 1
+bantime.maxtime   = 8w
+action   = audit-ipset-net
+           ntfy
+
+# --- Web-Anwendungen -- standardmaessig AUS --------------------------------------
+# Jede Anwendung muss die ECHTE Besucher-IP loggen (hinter einem Proxy die
+# weitergereichte Adresse, nur von vertrauenswuerdigen Proxys). Sperre per
+# ipset direkt am Server; mit CLOUDFLARE=1 zusaetzlich am Cloudflare-Rand.
+# Einschalten in waechter.local mit enabled = true, passendem logpath und
+#   action = audit-ipset
+#            ntfy-web[appname="Name", appurl="https://..."]
+# Pfade unten sind die Standardorte der jeweiligen Anwendung.
+
+[nextcloud-auth]
+enabled  = false
+filter   = nextcloud-auth
+logpath  = /var/www/nextcloud/data/nextcloud.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="Nextcloud"]
+
+[roundcube]
+enabled  = false
+filter   = roundcube-webauth
+logpath  = /var/log/roundcube/userlogins.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="Webmail"]
+
+# ntfy-Server: 401/403 wiederholt = Probierversuch. Mit CLOUDFLARE=1 den
+# ntfy-Host in CF_AUSNAHME_HOSTS eintragen (siehe cloudflare.local), sonst
+# sperrt ein Ban den Gesperrten auch von seinen eigenen Meldungen aus.
+[ntfy-auth]
+enabled  = false
+filter   = ntfy-auth
+logpath  = /var/lib/ntfy/ntfy.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="ntfy"]
+
+# Das Dashboard selbst: von install.sh eingeschaltet, wenn das Dashboard
+# auf diesem Server laeuft.
+[dashboard-auth]
+enabled  = @@DASHBOARD_JAIL@@
+filter   = dashboard-auth
+logpath  = /var/lib/linux-dashboard/auth.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="Command Center"]
+
+[pxe-auth]
+enabled  = false
+filter   = pxe-auth
+logpath  = /srv/pxe-docker/opt-pxe-gui/auth.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="PXE-Server"]
+
+[demo-qbs-auth]
+enabled  = false
+filter   = demo-qbs-auth
+logpath  = /var/lib/demo-qbs/auth.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="Demo-QBS"]
+
+[companion-auth]
+enabled  = false
+filter   = companion-auth
+logpath  = /root/ai-companion/data/auth.log
+backend  = auto
+maxretry = 3
+findtime = 1h
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="KI-Begleiterin"]
+
+# Kundenlogins: bewusst NICHT in der Web-Dauersperre (Mobilfunk-CGNAT traefe
+# Dritte) und kuerzeres Fenster.
+[yoga-auth]
+enabled  = false
+filter   = yoga-auth
+logpath  = /root/yoga-platform/app/storage/logs/auth.log
+backend  = auto
+maxretry = 3
+findtime = 10m
+bantime  = 1h
+bantime.increment = true
+bantime.factor    = 2
+bantime.maxtime   = 1w
+ignoreip = @@IGNOREIP@@
+action   = audit-ipset
+           @@CF_BLOCK@@
+           ntfy-web[appname="Yoga-Plattform"]

@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -73,8 +72,14 @@ class _PtySession:
             except OSError:
                 pass
 
+        # `script` legt im Host-Mount-Namespace ein echtes Host-PTY an. Ohne das
+        # zeigt fd 0 auf ein Container-devpts, das der Host nicht kennt — `screen`
+        # hält dann /dev/null für sein Terminal und chmod-et es auf 0600
+        # ("-bash: /dev/null: Permission denied" bei jedem Login).
         proc = None
-        for cmd in [_ns(['bash', '--norc', '--noprofile']), ['bash', '--norc', '--noprofile']]:
+        for cmd in [_ns(['script', '-qfec', 'bash --norc --noprofile', '/dev/null']),
+                    _ns(['bash', '--norc', '--noprofile']),
+                    ['bash', '--norc', '--noprofile']]:
             try:
                 proc = subprocess.Popen(
                     cmd, stdin=slave, stdout=slave, stderr=slave,
@@ -99,7 +104,7 @@ class _PtySession:
         self._master = master
         self._proc   = proc
 
-        time.sleep(0.12)
+        time.sleep(0.3)   # nsenter + script brauchen etwas, bis das innere PTY steht
         self._drain()
 
         # Export PS1 so sub-shells (sudo su, su, bash) inherit it.

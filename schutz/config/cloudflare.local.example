@@ -1,0 +1,31 @@
+# /etc/fail2ban/cloudflare.local -- Zugangsdaten fuer die Cloudflare-Sperre
+# (fail2ban -> Cloudflare IP-Liste + WAF-Regel). Rechte 0600.
+#
+# Nur noetig, wenn Web-Anwendungen hinter Cloudflare (Tunnel/Proxy) liegen:
+# deren Angreifer erreichen den Server nie mit eigener Adresse, ein ipset
+# traefe sie nicht. Wirksam sperren laesst sich dann nur am Cloudflare-Rand.
+#
+# 1. Cloudflare-Dashboard -> Profil -> API Tokens -> "Create Token"
+#    -> "Create Custom Token" mit GENAU diesen drei Berechtigungen:
+#       Account | Account Filter Lists | Edit     <- IPs in die Liste schreiben
+#       Zone    | Zone WAF             | Edit     <- Sperr-Regel anlegen
+#       Zone    | Zone                 | Read     <- Zonen ermitteln
+# 2. Token unten bei CF_API_TOKEN eintragen (bei account-eigenen Token
+#    "cfat_..." zusaetzlich CF_ACCOUNT_ID).
+# 3. /usr/local/sbin/cf-ban-setup.sh ausfuehren -- legt IP-Liste und
+#    WAF-Regel an und traegt CF_ACCOUNT_ID/CF_LIST_ID hier nach.
+#
+# Solange CF_API_TOKEN leer ist, bleibt die Cloudflare-Sperre still untaetig;
+# alles andere (Erkennung, ipset, Push) laeuft normal.
+
+CF_API_TOKEN=""
+
+# Hostnamen, die von der WAF-Regel AUSGENOMMEN werden (Leerzeichen-getrennt).
+# Wichtig fuer den ntfy-Server: sonst kann ein Gesperrter die Meldung ueber
+# seine eigene Sperre nicht mehr abholen.
+CF_AUSNAHME_HOSTS=""
+
+# Werden von cf-ban-setup.sh gefuellt.
+CF_ACCOUNT_ID=""
+CF_LIST_ID=""
+CF_LIST_NAME="fail2ban_bans"

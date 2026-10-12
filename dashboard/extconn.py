@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct

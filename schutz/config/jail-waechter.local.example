@@ -1,0 +1,50 @@
+# /etc/fail2ban/jail.d/waechter.local -- DEINE Anpassungen der Waechter-Jails.
+# Wird vom Installer einmal angelegt und nie ueberschrieben. Hier nur die
+# Schluessel nennen, die von jail.d/waechter.conf abweichen sollen.
+# Nach Aenderungen:  fail2ban-client -t && systemctl reload fail2ban
+# KEINE Kommentare hinter Werten.
+# Mit CLOUDFLARE=1 (schutz.conf) zusaetzlich "cf-block" in die action-Liste
+# einer Web-Jail aufnehmen, dann wird auch am Cloudflare-Rand gesperrt.
+#
+# --- Beispiel: Nextcloud ------------------------------------------------------
+# [nextcloud-auth]
+# enabled = true
+# logpath = /opt/nextcloud/config/nextcloud.log
+# action  = audit-ipset
+#           ntfy-web[appname="Nextcloud", appurl="https://cloud.example.com"]
+#
+# --- Beispiel: eigene Anwendung im AUTHFAIL-Format (Filter authfail) ------------
+# [authfail-meineapp]
+# enabled  = true
+# filter   = authfail
+# logpath  = /var/lib/meineapp/auth.log
+# backend  = auto
+# maxretry = 3
+# findtime = 1h
+# bantime  = 1h
+# bantime.increment = true
+# bantime.factor    = 2
+# bantime.maxtime   = 1w
+# ignoreip = 127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+# action   = audit-ipset
+#            ntfy-web[appname="Meine App", appurl="https://app.example.com"]
+#
+# --- Beispiel: zwei Mailserver (docker-mailserver) ------------------------------
+# [dovecot-mta1]
+# enabled  = true
+# filter   = dovecot
+# logpath  = /opt/mailserver1/docker-data/dms/mail-logs/mail.log
+# port     = 993,465,submission
+# backend  = auto
+# maxretry = 3
+# findtime = 1h
+# bantime  = 1h
+# bantime.increment = true
+# bantime.maxtime   = 1w
+# action   = audit-ipset
+#            ntfy
+#
+# [mail-unknownuser]
+# enabled = true
+# logpath = /opt/mailserver1/docker-data/dms/mail-logs/mail.log
+#           /opt/mailserver2/docker-data/dms/mail-logs/mail.log

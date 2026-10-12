@@ -1,0 +1,7 @@
+# /etc/linux-dashboard/blk_net4.txt -- statische Netzsperre (ipset blk_net4).
+# Sperrt ALLE direkten Verbindungen (SSH, Mail, ...) aus diesen IPv4-Netzen.
+# fail2ban fasst dieses Set nie an. Eine Zeile je Netz, Kommentar mit Beleg.
+# Wirksam mit: systemctl restart waechter-firewall.service  (bzw. waechter config-anwenden)
+#
+# Beispiel:
+# 192.0.2.0/24   # Botnetz, 600 SASL-Versuche am 01.01.

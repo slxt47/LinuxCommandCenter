@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -54,6 +53,8 @@ def get_vms():
         return _ns(c) if use_ns else c
 
     vms = []
+    owners = vm_owners_load()
+    viewers = vm_viewers_load()
     for line in result.stdout.strip().split("\n")[2:]:
         parts = line.split(None, 2)
         if len(parts) >= 2:
@@ -61,7 +62,8 @@ def get_vms():
             name = parts[1]
             state = parts[2].strip() if len(parts) > 2 else "unknown"
 
-            vm_info = {"id": vm_id, "name": name, "state": state, "displays": []}
+            vm_info = {"id": vm_id, "name": name, "state": state, "displays": [],
+                       "owner": owners.get(name), "viewers": viewers.get(name, [])}
             try:
                 info_r = subprocess.run(
                     virsh_cmd("dominfo", name),
@@ -199,6 +201,114 @@ def _parse_mem_mib(value_str, unit_str):
         return val * 1024
     # default: assume KiB
     return val // 1024
+
+
+# VM-Besitzer (Rollenmodell): {vm_name: username}. Admins (Gruppe dashadmin) sehen und
+# verwalten nur VMs, die sie selbst angelegt/geklont haben; Superadmins alles.
+# VMs ohne Eintrag (Bestand vor Einführung) gehören implizit den Superadmins.
+_OWNERS_FILE = DATA_DIR / "vm_owners.json"
+_owners_lock = threading.Lock()
+
+
+def vm_owners_load():
+    try:
+        with _owners_lock:
+            if _OWNERS_FILE.exists():
+                d = json.loads(_OWNERS_FILE.read_text())
+                return d if isinstance(d, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _owners_save_locked(d):
+    tmp = _OWNERS_FILE.with_name(_OWNERS_FILE.name + ".tmp")
+    tmp.write_text(json.dumps(d, indent=1, sort_keys=True))
+    os.replace(tmp, _OWNERS_FILE)
+
+
+def vm_owner_get(name):
+    return vm_owners_load().get(name)
+
+
+def vm_owner_set(name, owner):
+    with _owners_lock:
+        try:
+            d = json.loads(_OWNERS_FILE.read_text()) if _OWNERS_FILE.exists() else {}
+            if not isinstance(d, dict):
+                d = {}
+        except Exception:
+            d = {}
+        if owner:
+            d[name] = owner
+        else:
+            d.pop(name, None)
+        try:
+            _owners_save_locked(d)
+        except Exception:
+            pass
+
+
+def vm_owner_remove(name):
+    vm_owner_set(name, None)
+
+
+def vm_names_owned_by(owner):
+    return {n for n, o in vm_owners_load().items() if o == owner}
+
+
+# Sichtbarkeit (Superadmin-Freigabe): {vm_name: [user, ...]}. Freigegebene Benutzer
+# sehen die VM, dürfen Konsole/Power-Aktionen nutzen, aber nichts konfigurieren.
+_VIEWERS_FILE = DATA_DIR / "vm_viewers.json"
+
+
+def vm_viewers_load():
+    try:
+        with _owners_lock:
+            if _VIEWERS_FILE.exists():
+                d = json.loads(_VIEWERS_FILE.read_text())
+                return {k: list(v) for k, v in d.items() if isinstance(v, list)} \
+                    if isinstance(d, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def vm_viewers_get(name):
+    return vm_viewers_load().get(name, [])
+
+
+def vm_viewers_set(name, users):
+    users = sorted({u for u in (users or []) if u})
+    with _owners_lock:
+        try:
+            d = json.loads(_VIEWERS_FILE.read_text()) if _VIEWERS_FILE.exists() else {}
+            if not isinstance(d, dict):
+                d = {}
+        except Exception:
+            d = {}
+        if users:
+            d[name] = users
+        else:
+            d.pop(name, None)
+        try:
+            tmp = _VIEWERS_FILE.with_name(_VIEWERS_FILE.name + ".tmp")
+            tmp.write_text(json.dumps(d, indent=1, sort_keys=True))
+            os.replace(tmp, _VIEWERS_FILE)
+        except Exception:
+            pass
+    return users
+
+
+def vm_viewers_remove(name):
+    vm_viewers_set(name, [])
+
+
+def vm_names_visible_to(user):
+    """Eigene + freigegebene VMs eines Benutzers."""
+    names = vm_names_owned_by(user)
+    names.update(n for n, v in vm_viewers_load().items() if user in v)
+    return names
 
 
 # kasmVNC-Präferenz pro VM (Dashboard-seitig, da kasmVNC ein Viewer über VNC/SPICE
@@ -554,6 +664,8 @@ def vm_create(name, vcpus, memory_mib, pool, disk_size_gib, iso_path, network,
     <video>
       <model type='vga' vram='16384'/>
     </video>
+    <controller type='usb' model='qemu-xhci'/>
+    <input type='tablet' bus='usb'/>
     <console type='pty'/>
   </devices>
 </domain>"""
@@ -1211,6 +1323,42 @@ def _build_device_xml(kind, p):
         return (f"<interface type='network'><source network='{net}'/>"
                 f"<model type='{model}'/></interface>")
     return {"error": f"Unbekannter Gerätetyp: {kind}"}
+
+
+def vm_ensure_absolute_pointer(name):
+    """Sorgt dafür, dass die VM ein absolutes Zeigegerät (USB-Tablet) hat.
+
+    Nur mit PS/2-Maus (relativ) rechnet QEMU die absoluten Koordinaten der
+    Konsole in Bewegungs-Deltas um; Gast-Beschleunigung/-Geschwindigkeit
+    lassen den Gast-Zeiger dann vom Fadenkreuz/Mauszeiger der Konsole weg-
+    driften. gtk-vnc (KasmVNC-Pipeline) sendet im Relativ-Modus sogar erst nach
+    einem Klick-Grab überhaupt Bewegungen. Ein USB-Tablet ist per USB-Hotplug
+    live anhängbar (Windows/Linux treiberlos), wie es virt-manager standardmäßig
+    tut. Rückgabe: {"attached": bool, "warnings": [...]} oder {"error": str}.
+    """
+    r = _v("dumpxml", name)
+    if r.returncode != 0:
+        return {"error": (r.stderr or "").strip() or "dumpxml fehlgeschlagen"}
+    try:
+        root = ET.fromstring(r.stdout)
+    except ET.ParseError as e:
+        return {"error": f"XML Parse-Fehler: {e}"}
+    if root.find("./devices/input[@type='tablet']") is not None:
+        return {"attached": False}
+    xml = "<input type='tablet' bus='usb'/>"
+    running = "running" in (_v("domstate", name).stdout or "").lower()
+    if running:
+        # persistente VM: live + config; transiente VM (kein --config möglich): nur live
+        r = _v("attach-device", name, "/dev/stdin", "--live", "--config", inp=xml)
+        if r.returncode != 0:
+            r = _v("attach-device", name, "/dev/stdin", "--live", inp=xml)
+        if r.returncode != 0:
+            return {"error": (r.stderr or "").strip() or "attach-device fehlgeschlagen"}
+        return {"attached": True}
+    r = _v("attach-device", name, "/dev/stdin", "--config", inp=xml)
+    if r.returncode != 0:
+        return {"error": (r.stderr or "").strip() or "attach-device fehlgeschlagen"}
+    return {"attached": True, "warnings": ["gilt ab dem nächsten Start der VM"]}
 
 
 def vm_add_device(name, kind, params=None):

@@ -1,0 +1,7 @@
+[Unit]
+Description=Cloudflare-Sperrliste alle 15 Minuten mit fail2ban abgleichen
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+[Install]
+WantedBy=timers.target

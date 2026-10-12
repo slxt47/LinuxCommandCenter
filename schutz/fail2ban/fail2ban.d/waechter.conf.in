@@ -1,0 +1,5 @@
+# linux-dashboard-schutz: fail2ban merkt sich Sperren laenger (Standard: 1 Tag).
+# Noetig fuer bantime.increment - Wiederholungstaeter werden sonst nach gut
+# einem Tag "vergessen". Dauersperren (bantime -1) werden nie geloescht.
+[Definition]
+dbpurgeage = @@F2B_DBPURGEAGE@@

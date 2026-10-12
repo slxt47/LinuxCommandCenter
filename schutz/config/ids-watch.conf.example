@@ -1,0 +1,27 @@
+# /etc/ids-watch.conf -- Laufzeit-Einstellungen des IDS-Waechters.
+# Wird jede Minute neu gelesen, kein Neustart noetig. Gehoert DIR: Updates
+# haengen nur neue Schluessel an.
+# KEINE Kommentare hinter Werten.
+
+# MODUS=melden  -> nur /var/log/ids-watch.log (WUERDE-SPERREN), keine Sperre
+# MODUS=sperren -> Zeilen IDS-ANGRIFF / IDS-AUSGANG, fail2ban sperrt
+MODUS=melden
+
+# Suricata-Schwere: 1 = hoch, 2 = mittel, 3 = niedrig. Gesperrt wird bis einschliesslich:
+MIN_SEVERITY_ANGRIFF=2
+MIN_SEVERITY_AUSGANG=2
+
+# Notbremse: ab so vielen Sperren pro Stunde nur noch melden.
+# Grundrauschen durch Scanner-Reputationslisten liegt bei einigen hundert pro Stunde.
+MAX_SPERREN_PRO_STUNDE=1500
+
+# Gesundheitspruefung (ids-gesundheit.timer, alle 5 min). Optional: bei einem
+# Problem, das ein Neustart nicht behebt, Auftrag an eine agentci-Instanz.
+# Leer = nur Push-Meldung.
+AGENTCI_URL=
+AGENTCI_TOKEN_DATEI=
+AGENTCI_PROJEKT=
+AGENTCI_LINK=
+# plan = agentci erstellt nur einen Plan (Freigabe in der UI)
+# run  = agentci arbeitet sofort selbststaendig (als root!)
+AGENTCI_MODUS=plan

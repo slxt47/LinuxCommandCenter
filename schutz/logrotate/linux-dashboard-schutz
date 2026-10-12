@@ -1,0 +1,37 @@
+# Linux-Dashboard-Schutz
+/var/log/ids-watch.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+/var/log/ids-gesundheit.log {
+    monthly
+    rotate 6
+    compress
+    missingok
+    notifempty
+}
+/var/log/webauth/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+# Auth-Protokoll des Dashboards (fail2ban-Quelle). copytruncate: der Container
+# haelt die Datei offen.
+/var/lib/linux-dashboard/auth.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

@@ -9,7 +9,6 @@ import time
 import threading
 import socket
 import secrets
-import crypt
 import hashlib
 import base64
 import struct
@@ -268,8 +267,13 @@ class VMKasmManager:
             t0 = time.time()
             resized_restart = False
             try:
+                # --shared: gtk-vnc verbindet sich sonst EXKLUSIV (RFB-Shared-Flag=0).
+                # QEMU (share-policy allow-exclusive) wirft dann alle anderen VNC-Clients
+                # raus und weist neue ab → die einfache noVNC-Konsole derselben VM
+                # bricht ab, sobald KasmVNC verbindet, und umgekehrt kommt KasmVNC
+                # nicht mehr rein. Mit --shared koexistieren beide (verifiziert).
                 viewer = subprocess.Popen(
-                    ["remote-viewer", "--kiosk", "--kiosk-quit=on-disconnect",
+                    ["remote-viewer", "--shared", "--kiosk", "--kiosk-quit=on-disconnect",
                      sess["target"]],
                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
@@ -363,16 +367,20 @@ _vmkasm_mgr = VMKasmManager()
 _ws_sessions: dict = {}   # {token: (port, created_at, owner)}
 _ws_sessions_lock = threading.Lock()
 
-def _ws_register(port: int, owner: str = "") -> str:
-    """Create a session token for an internal websockify port, bound to a user."""
+def _ws_register(port: int, owner: str = "", ttl: int = 1800) -> str:
+    """Create a session token for an internal websockify port, bound to a user.
+
+    owner — Benutzername oder "share:<id>" für öffentliche VM-Freigaben (die
+            Gültigkeit solcher Tokens endet mit der Freigabe, deshalb eigene ttl).
+    """
     token = secrets.token_urlsafe(16)
     now   = time.time()
     with _ws_sessions_lock:
-        # Kurze TTL (30 min) reduziert das Fenster für Stale-Token/Port-Reuse
-        stale = [k for k, v in _ws_sessions.items() if now - v[1] > 1800]
+        # Kurze TTL (Default 30 min) reduziert das Fenster für Stale-Token/Port-Reuse
+        stale = [k for k, v in _ws_sessions.items() if now > v[1]]
         for k in stale:
             del _ws_sessions[k]
-        _ws_sessions[token] = (port, now, owner)
+        _ws_sessions[token] = (port, now + max(60, int(ttl)), owner)
     return token
 
 def _ws_port_for(token: str):
@@ -402,12 +410,50 @@ def _console_url(headers, console_type: str, session_token: str) -> str:
     return f"{proto}://{host}/console/{console_type}?session={session_token}"
 
 
-def _kasm_client_inject(ws_path: str, stop_js: str) -> bytes:
+def _kasm_client_inject(ws_path: str, stop_js: str, beacon_sid: str = "") -> bytes:
     """Gemeinsame HTML-Injection für KasmVNC-Clients (Browser-Sessions + VM-Konsolen).
 
-    ws_path — absoluter WebSocket-Proxy-Pfad (z.B. "/kasmvnc-ws/<sid>" oder "/ws/<token>")
-    stop_js — JS-Body des ✕-Buttons (Browser-Session stoppen bzw. Konsole schließen)
+    ws_path    — absoluter WebSocket-Proxy-Pfad ("/kasmvnc-ws/<sid>" oder "/ws/<token>")
+    stop_js    — JS-Body des ✕-Buttons (Konsole schließen). Leer lassen, wenn kein
+                 ✕-Button eingeblendet werden soll (Browser-Sessions).
+    beacon_sid — Browser-Session-ID: aktiviert den Lebenszeichen-Heartbeat für die
+                 automatische Idle-Pause. Leer lassen für VM-Konsolen (die laufen
+                 auf dem Host und werden nicht pausiert).
     """
+    # Heartbeat: hält die Session wach, solange der Tab SICHTBAR ist, und taut sie
+    # beim Zurückkehren sofort wieder auf. Ein geschlossener oder im Hintergrund
+    # liegender Tab sendet nichts → der Idle-Wächter friert die Session ein.
+    # Bewusst an die Sichtbarkeit gekoppelt (nicht an die WebSocket-Verbindung):
+    # ein offener Hintergrund-Tab soll die CPU nicht dauerhaft belegen.
+    _beacon = ''
+    if beacon_sid:
+        _beacon = (
+            'var _bid=' + json.dumps(beacon_sid) + ',_bBusy=false;'
+            'function _beat(){'
+            'if(_bBusy)return;_bBusy=true;'
+            'fetch("/api/browser/ping",{method:"POST",credentials:"same-origin",'
+            'headers:{"Content-Type":"application/json"},body:JSON.stringify({id:_bid})})'
+            '.catch(function(){}).then(function(){_bBusy=false;});}'
+            '_beat();'
+            'setInterval(function(){if(document.visibilityState!=="hidden")_beat();},60000);'
+            # Rückkehr zum Tab: sofort auftauen, nicht erst beim nächsten Intervall.
+            'document.addEventListener("visibilitychange",function(){'
+            'if(document.visibilityState!=="hidden")_beat();});'
+            'window.addEventListener("focus",_beat);'
+        )
+    _stopbtn = ''
+    if stop_js:
+        _stopbtn = (
+            '_xBtn=document.createElement("button");'
+            '_xBtn.innerHTML="&#10005;";_xBtn.title="Session beenden";'
+            '_xBtn.style.cssText="position:fixed;bottom:72px;right:70px;z-index:2147483647;'
+            'width:48px;height:48px;border-radius:50%;background:#b71c1c;color:#fff;'
+            'border:none;font-size:20px;cursor:pointer;'
+            'box-shadow:0 3px 10px rgba(0,0,0,.6);display:flex;align-items:center;'
+            'justify-content:center;touch-action:manipulation;'
+            '-webkit-tap-highlight-color:transparent;";'
+            'document.body.appendChild(_xBtn);'
+        )
     return (
         # touch-action:none on the KasmVNC canvas prevents the browser from
         # intercepting touch drags for scrolling/zooming before the GestureHandler
@@ -416,6 +462,7 @@ def _kasm_client_inject(ws_path: str, stop_js: str) -> bytes:
         '#noVNC_container,#noVNC_screen{touch-action:none!important}</style>'
         '<script>(function(){'
         'var _isMobile=/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);'
+        + _beacon +
         # --- Pre-set KasmVNC localStorage quality defaults before initSetting() reads them ---
         # initSetting() skips if key already exists → we control defaults without overriding user changes
         'if(!localStorage.getItem("dynamic_quality_max"))localStorage.setItem("dynamic_quality_max","6");'
@@ -516,16 +563,11 @@ def _kasm_client_inject(ws_path: str, stop_js: str) -> bytes:
         'justify-content:center;touch-action:manipulation;'
         '-webkit-tap-highlight-color:transparent;";'
         'document.body.appendChild(_kbBtn);'
-        # Stop-session button — stored in outer-scope _xBtn so _ts can reference it directly
-        '_xBtn=document.createElement("button");'
-        '_xBtn.innerHTML="&#10005;";_xBtn.title="Session beenden";'
-        '_xBtn.style.cssText="position:fixed;bottom:72px;right:70px;z-index:2147483647;'
-        'width:48px;height:48px;border-radius:50%;background:#b71c1c;color:#fff;'
-        'border:none;font-size:20px;cursor:pointer;'
-        'box-shadow:0 3px 10px rgba(0,0,0,.6);display:flex;align-items:center;'
-        'justify-content:center;touch-action:manipulation;'
-        '-webkit-tap-highlight-color:transparent;";'
-        'document.body.appendChild(_xBtn);'
+        # Stop-session button — stored in outer-scope _xBtn so _ts can reference it directly.
+        # Nur wenn stop_js gesetzt ist (VM-Konsolen). Browser-Sessions lassen ihn weg:
+        # dort wird die Session ausschliesslich ueber die Sessionverwaltung beendet,
+        # damit ein Fehlgriff auf dem Handy sie nicht unwiderruflich loescht.
+        + _stopbtn +
         # Clipboard button — opens our own clipboard panel (native menu is
         # unreachable on touch). Positioned above the keyboard button.
         '_clipBtn=document.createElement("button");'

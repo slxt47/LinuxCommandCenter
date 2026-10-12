@@ -1,0 +1,17 @@
+# Linux-Dashboard-Schutz: Suricata passiv auf dem Internet-Interface mit eigener
+# Konfig. Drop-in /etc/systemd/system/suricata.service.d/waechter.conf
+[Service]
+# Socket-Verzeichnis fuer suricatasc: /run ist tmpfs, Suricata laeuft als
+# Benutzer suricata und darf es nach dem Rechteabgeben nicht selbst anlegen.
+ExecStartPre=/usr/bin/install -d -m 0750 -o suricata -g suricata /run/suricata
+ExecStart=
+ExecStart=/usr/bin/suricata --af-packet -c /etc/suricata/suricata-ids.yaml --pidfile /run/suricata.pid --user suricata --group suricata
+ExecReload=
+ExecReload=/bin/kill -USR2 $MAINPID
+Type=simple
+PIDFile=
+Restart=on-failure
+RestartSec=30
+Nice=10
+CPUQuota=@@IDS_CPU_QUOTA@@
+MemoryMax=@@IDS_MEMORY_MAX@@

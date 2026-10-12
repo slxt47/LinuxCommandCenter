@@ -1,0 +1,81 @@
+#!/bin/bash
+# ---------------------------------------------------------------------------
+# waechter -- Bedienung des Schutz-Pakets (fail2ban + IDS-Waechter) des
+# Linux Dashboards.
+#
+#   waechter status              Dienste, Jails, Sperrlisten, Version
+#   waechter freigeben <ip>      IP ueberall entsperren (= webauth-unban.sh)
+#   waechter sperren             alle aktiven Sperren anzeigen
+#   waechter ids-modus <m>       IDS-Modus setzen: melden | sperren
+#   waechter config-anwenden     schutz.conf neu einlesen (Jails, Suricata,
+#                                Firewall neu erzeugen und neu laden)
+#   waechter test-push           Probe-Push an ntfy senden
+#   waechter version
+# ---------------------------------------------------------------------------
+set -uo pipefail
+SHARE=/usr/local/share/linux-dashboard-schutz
+ETC=/etc/linux-dashboard
+[ "$(id -u)" -eq 0 ] || { echo "Bitte als root ausfuehren." >&2; exit 1; }
+
+gruen() { printf '\033[32m%s\033[0m' "$*"; }
+rot()   { printf '\033[31m%s\033[0m' "$*"; }
+dienst() {
+    local s; s=$(systemctl is-active "$1" 2>/dev/null)
+    if [ "$s" = active ]; then printf '  %-26s %s\n' "$1" "$(gruen aktiv)"
+    else printf '  %-26s %s\n' "$1" "$(rot "${s:-unbekannt}")"; fi
+}
+anzahl() { ipset list -t "$1" 2>/dev/null | sed -n 's/^Number of entries: //p'; }
+
+case "${1:-status}" in
+  status)
+    echo "Linux-Dashboard-Schutz $(cat "$ETC/schutz-version" 2>/dev/null || echo '?')"
+    echo
+    echo "== Dienste"
+    dienst fail2ban
+    grep -q '^FIREWALL="\?eigen' "$ETC/schutz.conf" 2>/dev/null && dienst waechter-firewall
+    if grep -q '^IDS_AKTIV="\?1' "$ETC/schutz.conf" 2>/dev/null; then
+        dienst suricata; dienst ids-watch
+        printf '  %-26s %s\n' "IDS-Modus" "$(sed -n 's/^MODUS=//p' /etc/ids-watch.conf 2>/dev/null)"
+    fi
+    echo
+    echo "== Jails"
+    fail2ban-client status 2>/dev/null | sed -n 's/^.*Jail list:\s*/  /p'
+    echo
+    echo "== Sperrlisten (ipset)"
+    for s in ssh_ban4 ssh_ban6 perm_ban4 perm_ban6 f2b_long4 f2b_long6 f2b_net4 blk_net4 ids_ban4 ids_ban6; do
+        printf '  %-10s %s\n' "$s" "$(anzahl $s || echo -)"
+    done
+    echo
+    echo "== Netze (aus schutz.conf erzeugt)"
+    sed -n 's/^\(WAN_IF\|SERVER_NETZE\|NIE_SPERREN\)="\(.*\)"/  \1: \2/p' "$ETC/schutz-netze.generiert" 2>/dev/null
+    ;;
+  freigeben|unban)
+    [ -n "${2:-}" ] || { echo "Aufruf: waechter freigeben <ip>" >&2; exit 1; }
+    exec /usr/local/sbin/webauth-unban.sh "$2"
+    ;;
+  sperren|bans)
+    exec /usr/local/sbin/webauth-unban.sh --status
+    ;;
+  ids-modus)
+    case "${2:-}" in melden|sperren) ;; *) echo "Aufruf: waechter ids-modus melden|sperren" >&2; exit 1 ;; esac
+    sed -i "s/^MODUS=.*/MODUS=$2/" /etc/ids-watch.conf
+    echo "IDS-Modus: $2 (wirkt innerhalb einer Minute)"
+    ;;
+  config-anwenden|apply)
+    exec "$SHARE/install-schutz.sh" --anwenden
+    ;;
+  test-push)
+    grep -q '^NTFY_URL="\?[a-z]' "$ETC/schutz.conf" || { echo "NTFY_URL ist leer - keine Pushes konfiguriert."; exit 1; }
+    /usr/local/sbin/waechter-push -t "white_check_mark" "Test: Linux-Dashboard-Schutz" default \
+        "Probe-Push von $(hostname) um $(date '+%Y-%m-%d %H:%M:%S %Z')"
+    echo "Probe-Push gesendet."
+    ;;
+  version|--version)
+    cat "$ETC/schutz-version" 2>/dev/null || echo "nicht installiert"
+    ;;
+  -h|--help|help)
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    echo "Unbekannter Befehl: $1 (waechter help)" >&2; exit 1 ;;
+esac

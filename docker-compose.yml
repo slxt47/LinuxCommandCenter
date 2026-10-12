@@ -1,12 +1,14 @@
 services:
   linux-dashboard:
     build: .
-    image: linux-dashboard:portable
+    image: linux-dashboard:local
     container_name: linux-dashboard
     network_mode: host
     pid: "host"
     # Least-Privilege statt `privileged: true`: nur die für nsenter (Host-Mount-
-    # Namespace) nötigen Zusatz-Capabilities. seccomp/apparmor unconfined, damit
+    # Namespace) nötigen Zusatz-Capabilities. Docker-Default-Caps (CHOWN,
+    # DAC_OVERRIDE, KILL, SETUID/SETGID, FOWNER, SYS_CHROOT, MKNOD …) decken
+    # Benutzer-/Prozessverwaltung bereits ab. seccomp/apparmor unconfined, damit
     # setns/mount nicht vom Default-Profil blockiert wird.
     cap_add:
       - SYS_ADMIN
@@ -24,27 +26,20 @@ services:
       - ./dashboard:/app/dashboard:ro
       - ./static:/app/static:ro
       - /sys:/sys:ro
-      # libvirt-Socket für VM-Verwaltung. Existiert auf einem System ohne libvirt
-      # nicht — dann wird ein leeres Verzeichnis angelegt und die VM-Funktionen
-      # bleiben inaktiv (Rest des Dashboards läuft normal weiter).
+      # libvirt-Socket für VM-Verwaltung. Ohne libvirt bleibt das Verzeichnis
+      # leer und die VM-Funktionen inaktiv; der Rest läuft normal.
       - /run/libvirt:/run/libvirt
-      # Host-Benutzer für den Dashboard-Login (PAM/crypt gegen /etc/shadow).
+      # Host-Benutzer für den Dashboard-Login (crypt gegen /etc/shadow).
       - /etc/passwd:/etc/passwd:ro
       - /etc/shadow:/etc/shadow:ro
       - /etc/group:/etc/group:ro
-      # Docker-Steuerung (Browser-Sessions etc.)
+      # Docker-Steuerung (Docker-Reiter, Browser-Sessions)
       - /var/run/docker.sock:/var/run/docker.sock
-      # Persistente Daten (Sessions o.ä.)
+      # Persistente Daten (Sessions, VM-Besitz, auth.log für fail2ban)
       - /var/lib/linux-dashboard:/data
     environment:
       - PYTHONUNBUFFERED=1
-      # Direkter Zugriff ist per Default nur von localhost / Docker-Bridges
-      # (127./172./10.) erlaubt. Für direkten LAN-/IP-Zugriff auf DIESEM System
-      # (ohne Cloudflare-Tunnel) die erlaubten IP-Präfixe erweitern.
-      #   "*"              = jeder Zugriff erlaubt
-      #   "192.168.,100."  = nur diese Präfixe zusätzlich erlauben
-      - DASHBOARD_ALLOWED_NETS=*
-      # Optionaler statischer Zugriffs-Token (falls im Code unterstützt):
-      # - DASHBOARD_TOKEN=geheim123
-      # Alternativer Port (Default 8420):
-      # - DASH_PORT=8420
+    # Server-spezifische Einstellungen (erlaubte Netze, Superadmins, Port …).
+    # Legt install.sh an; Beschreibung aller Schlüssel siehe Datei bzw. README.
+    env_file:
+      - /etc/linux-dashboard/dashboard.env
