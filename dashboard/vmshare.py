@@ -324,10 +324,10 @@ def share_guest_inject(share, kind="kasmvnc"):
         "border-radius:999px;padding:4px 12px;font:11px/1.4 ui-monospace,Menlo,monospace;"
         "pointer-events:none;white-space:nowrap;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);"
         "opacity:.85;transition:opacity .3s}"
-        "#_lccShare b{color:#00e87b;font-weight:600}"
+        "#_lccShare b{color:#3d9bff;font-weight:600}"
         "#_lccShareEnd{position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;"
         "background:rgba(6,8,13,.94);color:#e2e8f0;font:15px/1.6 system-ui,sans-serif;text-align:center;padding:24px}"
-        "#_lccShareEnd a{color:#00e87b}"
+        "#_lccShareEnd a{color:#3d9bff}"
         "</style>"
         '<div id="_lccShare">&#128279; Freigabe <b>' + _esc(vm) + '</b> &middot; endet in <span id="_lccShareT">…</span></div>'
         '<div id="_lccShareEnd"><div><div style="font-size:40px;margin-bottom:12px">&#9203;</div>'
@@ -363,7 +363,7 @@ _PAGE_CSS = (
     ".ico{font-size:44px;margin-bottom:14px}"
     "h1{font-size:19px;font-weight:600;margin-bottom:10px}"
     "p{color:#8b9dc3;font-size:14px;line-height:1.6}"
-    ".btn{display:inline-block;margin-top:22px;background:#00e87b;color:#06080d;font-weight:600;"
+    ".btn{display:inline-block;margin-top:22px;background:#3d9bff;color:#06080d;font-weight:600;"
     "text-decoration:none;padding:12px 22px;border-radius:10px;font-size:14px}"
     ".mono{font-family:ui-monospace,Menlo,monospace;color:#4a5e80;font-size:11px;margin-top:18px}"
 )

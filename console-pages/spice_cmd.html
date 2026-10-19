@@ -104,7 +104,7 @@ html, body { height: 100%; background: #06080d; overflow: hidden; }
   <textarea id="clip-box" rows="3" placeholder="Text einfügen (long-press → Paste) …" style="width:100%;background:#0d1320;color:#c8d4e8;border:1px solid #2a3a52;border-radius:6px;padding:8px 10px;font:13px/1.5 monospace;resize:none;outline:none;display:block;box-sizing:border-box;"></textarea>
   <div style="display:flex;gap:6px;margin-top:8px;">
     <button onclick="clipRead()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">📥 Zwischenablage laden</button>
-    <button onclick="clipType()" style="flex:1;background:#00e87b;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Eintippen</button>
+    <button onclick="clipType()" style="flex:1;background:#3d9bff;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Eintippen</button>
     <button onclick="toggleClip()" style="background:rgba(255,255,255,0.05);color:#8b9dc3;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer;">✕</button>
   </div>
 </div>
@@ -198,7 +198,7 @@ async function _pingRtt() {
 setInterval(async () => {
   await _pingRtt();
   if (_rtt > 0) {
-    const col = _rtt < 70 ? '#00e87b' : _rtt < 200 ? '#fbbf24' : '#ef4444';
+    const col = _rtt < 70 ? '#3d9bff' : _rtt < 200 ? '#fbbf24' : '#ef4444';
     setStatus(`SPICE ● ${_rtt} ms RTT`, col);
   }
 }, 4000);
@@ -603,7 +603,7 @@ window.clipType = () => {
   let i = 0;
   setStatus('Sende Text…', '#a855f7', true);
   (function step() {
-    if (i >= chars.length) { setStatus('Text gesendet ✓', '#00e87b'); return; }
+    if (i >= chars.length) { setStatus('Text gesendet ✓', '#3d9bff'); return; }
     sendSpiceChar(chars[i++]);
     _clipTimer = setTimeout(step, 12);
   })();
@@ -612,7 +612,7 @@ window.clipType = () => {
 window.clipRead = async () => {
   try {
     const t = await navigator.clipboard.readText();
-    if (t) { document.getElementById('clip-box').value = t; setStatus('Zwischenablage geladen ✓', '#00e87b'); }
+    if (t) { document.getElementById('clip-box').value = t; setStatus('Zwischenablage geladen ✓', '#3d9bff'); }
     else setStatus('Zwischenablage ist leer', '#fbbf24');
   } catch {
     setStatus('Kein Zugriff – Text bitte manuell einfügen', '#ef4444');

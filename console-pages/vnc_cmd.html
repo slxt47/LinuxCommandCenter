@@ -72,11 +72,11 @@ html, body { height: 100%; background: #06080d; overflow: hidden; }
   -webkit-tap-highlight-color:transparent; user-select:none;
 }
 .btn:active  { background:rgba(255,255,255,0.25); }
-.btn.kb-on   { background:rgba(0,232,123,0.2); border-color:#00e87b; color:#00e87b; }
+.btn.kb-on   { background:rgba(61,155,255,0.2); border-color:#3d9bff; color:#3d9bff; }
 
 #status {
   position:fixed; bottom:56px; left:0; right:0; padding:7px 14px;
-  background:rgba(6,8,13,0.88); color:#00e87b;
+  background:rgba(6,8,13,0.88); color:#3d9bff;
   font:12px/1.4 monospace; text-align:center;
   z-index:201; pointer-events:none; transition:opacity 0.6s;
 }
@@ -99,7 +99,7 @@ html, body { height: 100%; background: #06080d; overflow: hidden; }
   <textarea id="clip-box" rows="3" placeholder="Text einfügen (long-press → Paste) — erscheint auch wenn Remote etwas kopiert" style="width:100%;background:#0d1320;color:#c8d4e8;border:1px solid #2a3a52;border-radius:6px;padding:8px 10px;font:13px/1.5 monospace;resize:none;outline:none;display:block;box-sizing:border-box;"></textarea>
   <div style="display:flex;gap:6px;margin-top:8px;">
     <button onclick="clipRead()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">📥 Laden</button>
-    <button onclick="clipSend()" style="flex:1;background:#00e87b;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Clipboard + Strg+V</button>
+    <button onclick="clipSend()" style="flex:1;background:#3d9bff;color:#06080d;border:none;border-radius:6px;padding:8px;font-weight:600;font-size:12px;cursor:pointer;">Clipboard + Strg+V</button>
     <button onclick="clipType()" style="flex:1;background:rgba(255,255,255,0.08);color:#c8d4e8;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:8px;font-size:12px;cursor:pointer;">Eintippen</button>
     <button onclick="toggleClip()" style="background:rgba(255,255,255,0.05);color:#8b9dc3;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:8px 12px;font-size:14px;cursor:pointer;">✕</button>
   </div>
@@ -151,7 +151,7 @@ const _kbLang       = _XKB_LANG[_xkbLayout] || navigator.language || 'en';
 kbEl.lang           = _kbLang;
 btnKb.textContent   = `⌨ ${_xkbLayout.toUpperCase()}`;
 
-function setStatus(msg, col='#00e87b', keep=false) {
+function setStatus(msg, col='#3d9bff', keep=false) {
   statusEl.textContent = msg; statusEl.style.color = col; statusEl.style.opacity='1';
   if (!keep) setTimeout(()=>statusEl.style.opacity='0', 3000);
 }
@@ -388,7 +388,7 @@ window.clipType=()=>{
   clearTimeout(_clipTimer);
   const chars=[...text.replace(/\r\n/g,'\n').replace(/\r/g,'\n')];
   let i=0;
-  setStatus('Sende Text…','#00e87b',true);
+  setStatus('Sende Text…','#3d9bff',true);
   (function step(){
     if(i>=chars.length){setStatus('Text gesendet ✓');return;}
     const c=chars[i++];

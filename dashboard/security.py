@@ -608,6 +608,69 @@ def security_bans(my_ip=""):
             "my_ip": my_ip, "now": time.time()}
 
 
+MANUAL_JAIL = "manuell"
+MANUAL_LOG = DATA_DIR / "security_manual_bans.log"
+# Nie manuell sperrbar: interne Netze + die Netze des Servers selbst (zusaetzlich zu
+# ignoreip der Jail). Server-Netze aus der Datei des Schutz-Pakets (SERVER_NETZE)
+# bzw. der Umgebungsvariable DASH_HOST_PUBLIC_IPS - nichts Server-Spezifisches im Code.
+NETZE_FILE = "/etc/linux-dashboard/schutz-netze.generiert"
+_PRIVATE_NETS = ("127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                 "100.64.0.0/10", "fc00::/7", "fe80::/10")
+
+
+def _no_ban_nets():
+    netze = list(_PRIVATE_NETS)
+    netze += os.environ.get("DASH_HOST_PUBLIC_IPS", "").replace(",", " ").split()
+    try:
+        with open(HOST_ROOT + NETZE_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r'^\s*SERVER_NETZE="([^"]*)"', line)
+                if m:
+                    netze += m.group(1).split()
+    except OSError:
+        pass
+    out = []
+    for n in netze:
+        try:
+            out.append(ipaddress.ip_network(n, strict=False))
+        except ValueError:
+            pass
+    return out
+
+
+def security_ban(ip, by, my_ip=""):
+    """IP manuell sperren (Jail "manuell": Cloudflare-Rand + Server-Firewall, 4 Wochen)."""
+    try:
+        addr = ipaddress.ip_address(str(ip).strip())
+    except ValueError:
+        return {"success": False, "error": "Ungültige IP-Adresse"}
+    ip = str(addr)
+    if not addr.is_global or any(addr in n for n in _no_ban_nets()):
+        return {"success": False, "error": "Interne Adressen und der Server selbst können nicht gesperrt werden"}
+    try:
+        if my_ip and ipaddress.ip_address(my_ip) == addr:
+            return {"success": False, "error": "Das ist deine eigene aktuelle IP – Sperre abgelehnt"}
+    except ValueError:
+        pass
+    try:
+        r = subprocess.run(_ns(["fail2ban-client", "set", MANUAL_JAIL, "banip", ip]),
+                           capture_output=True, text=True, timeout=30)
+        output = (r.stdout + r.stderr).strip()
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    try:
+        ok = ip in _banned_now().get(MANUAL_JAIL, [])
+    except Exception:
+        ok = r.returncode == 0
+    try:
+        with open(MANUAL_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": time.time(), "ip": ip, "by": by, "ok": ok}) + "\n")
+    except OSError:
+        pass
+    print(f"[security] {by} hat {ip} manuell gesperrt (ok={ok})", flush=True)
+    return {"success": ok, "ip": ip, "error": None if ok else (output[-300:] or "Sperre nicht bestätigt")}
+
+
 def security_unban(ip, by):
     try:
         ip = str(ipaddress.ip_address(str(ip).strip()))

@@ -269,5 +269,5 @@ def ids_live(rng="60", since=0.0):
                     tag[k] += v
     return {
         "now": now, "status": _status(), "traffic": traffic,
-        "series": SERIES, "bar_s": breite, "bars": bars, "tag": tag, "recent": recent,
+        "iface": IFACE, "series": SERIES, "bar_s": breite, "bars": bars, "tag": tag, "recent": recent,
     }

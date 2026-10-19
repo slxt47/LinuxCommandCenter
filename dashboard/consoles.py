@@ -547,7 +547,7 @@ def _kasm_client_inject(ws_path: str, stop_js: str, beacon_sid: str = "") -> byt
         'window.postMessage({action:"hide_keyboard_controls"},"*");'
         'if(ti){ti._noRef=true;ti.blur();setTimeout(function(){ti._noRef=false;},400);}'
         '}else{'
-        '_kbOpen=true;if(_kbBtn)_kbBtn.style.background="#2e7d32";'
+        '_kbOpen=true;if(_kbBtn)_kbBtn.style.background="#1e5bb8";'
         'window.postMessage({action:"show_keyboard_controls"},"*");'
         'if(ti)ti.focus();'
         '}}'

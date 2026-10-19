@@ -35,11 +35,11 @@ html, body { height: 100%; background: #0a0a0a; overflow: hidden; }
   -webkit-tap-highlight-color: transparent; user-select: none;
 }
 .btn:active { background: rgba(255,255,255,0.25); }
-.btn.kb-on { background: rgba(0,232,123,0.2); border-color: #00e87b; color: #00e87b; }
+.btn.kb-on { background: rgba(61,155,255,0.2); border-color: #3d9bff; color: #3d9bff; }
 
 #status-bar {
   position: fixed; bottom: 56px; left: 0; right: 0; padding: 5px 14px;
-  background: rgba(10,10,10,0.92); color: #00e87b;
+  background: rgba(10,10,10,0.92); color: #3d9bff;
   font: 11px/1.4 monospace; text-align: center;
   z-index: 201; pointer-events: none; transition: opacity 0.6s;
 }
@@ -86,7 +86,7 @@ const btnKb    = document.getElementById('btn-kb');
 const wrap     = document.getElementById('terminal-wrap');
 let ws = null;
 
-function setStatus(msg, col = '#00e87b', keep = false) {
+function setStatus(msg, col = '#3d9bff', keep = false) {
   statusEl.textContent = msg;
   statusEl.style.color = col;
   statusEl.style.opacity = '1';

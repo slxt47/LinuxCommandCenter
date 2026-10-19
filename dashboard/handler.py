@@ -30,10 +30,12 @@ from dashboard.base import NOVNC_DIR, SPICE_DIR, STATIC_DIR, _ns
 from dashboard.browsers import _browser_mgr
 from dashboard.consoles import _console_url, _kasm_client_inject, _proxy_mgr, _vmkasm_mgr, _ws_handshake_response, _ws_owner_for, _ws_port_for, _ws_recv, _ws_register, _ws_send
 from dashboard.docker import _docker_frames, _docker_stream_close, _ws_slot_free, _ws_slot_take, docker_changes, docker_container, docker_container_action, docker_container_remove, docker_container_rename, docker_container_update, docker_containers, docker_df, docker_events, docker_exec_cleanup, docker_exec_message_de, docker_exec_open, docker_exec_resize, docker_archive_open, docker_archive_put, docker_container_commit, docker_container_create, docker_hub_search, docker_hub_tags, docker_image_build, docker_image_history, docker_image_inspect, docker_image_pull, docker_image_remove, docker_image_save_open, docker_image_tag, docker_images, docker_inspect, docker_job, docker_jobs, docker_logs, docker_logs_open, docker_network, docker_network_connect, docker_network_create, docker_network_disconnect, docker_network_remove, docker_networks, docker_prune, docker_prune_dryrun, docker_stack_action, docker_stack_compose, docker_stacks, docker_stats, docker_system, docker_top, docker_volume, docker_volume_create, docker_volume_remove, docker_volumes
-from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked
+from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked, load_pkey
+from dashboard.prefs import get_prefs, set_prefs, ssh_default_secret
 from dashboard.networks import list_networks, net_action, net_add_dhcp_host, net_create, net_dhcp_hosts, net_edit, net_get_xml, net_leases, net_remove_dhcp_host, net_set_xml
 from dashboard.storage import iso_delete, iso_download, iso_download_status, iso_list, list_isos, list_pools, list_volumes, vol_create, vol_delete
-from dashboard.security import security_bans, security_events, security_unban
+from dashboard.security import security_ban, security_bans, security_events, security_unban
+from dashboard.notify import ntfy_messages
 from dashboard.ids import ids_live
 from dashboard.sysinfo import get_cpu_info, get_disk_info, get_memory_info, get_network_info, get_services, get_system_info, get_top_processes, get_updates, run_update
 from dashboard.terminal import _pty_session, get_terminal_info
@@ -376,7 +378,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         from html import escape as _esc
         if self._PUBLIC_URL.startswith(("http://", "https://")):
             u = _esc(self._PUBLIC_URL, quote=True)
-            hint = f"Bitte verwende <a href='{u}' style='color:#00e87b'>{u}</a>"
+            hint = f"Bitte verwende <a href='{u}' style='color:#3d9bff'>{u}</a>"
         else:
             hint = "Zugriff von dieser Adresse ist nicht freigegeben (DASHBOARD_ALLOWED_NETS)."
         body = (
@@ -973,6 +975,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if self._vm_denied(_vmname):
                     return
 
+        if path == "/api/prefs":
+            self.send_json(get_prefs(self._get_session_user()))
+            return
         if path == "/api/me":
             token = self._get_session_token()
             _me = _session_mgr.validate(token)
@@ -1041,6 +1046,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         elif path == "/api/security/bans":
             if self._require_superadmin(): return
             self.send_json(security_bans(client_ip(self)))
+        elif path == "/api/notifications":
+            if self._require_superadmin(): return
+            _q = parse_qs(parsed.query)
+            self.send_json(ntfy_messages(since=_q.get("since", ["24h"])[0][:4],
+                                         limit=_q.get("limit", ["200"])[0][:4]))
         elif path == "/api/updates":
             if self._require_superadmin(): return
             self.send_json(get_updates())
@@ -1737,6 +1747,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(run_update())
 
         # ── External connections ──────────────────────────────────────────────
+        elif path == "/api/prefs":
+            def _check_key(text, pp):
+                return load_pkey(text, pp)[1]
+            self.send_json(set_prefs(self._get_session_user(), data, validate_key=_check_key))
+
         elif path == "/api/ext/save":
             proto    = data.get("proto", "").lower().strip()
             host     = data.get("host", "").strip()
@@ -1744,6 +1759,18 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             username = data.get("username", "").strip()
             password = data.get("password", "")
             label    = data.get("label", "").strip()
+            private_key = (data.get("private_key") or "").strip()
+            passphrase  = data.get("passphrase") or ""
+            use_default = bool(data.get("use_default"))
+            if private_key:
+                if len(private_key) > 16384:
+                    self.send_json({"error": "Schlüssel zu lang"}, 400)
+                    return
+                _err = load_pkey(private_key, passphrase or None)[1]
+                if _err:
+                    self.send_json({"error": _err}, 400)
+                    return
+                private_key += "\n"
             if not proto or not host or not port:
                 self.send_json({"error": "proto, host und port erforderlich"}, 400)
                 return
@@ -1754,7 +1781,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json({"error": "Zielhost nicht erlaubt (Loopback/Metadaten)"}, 400)
                 return
             cid = _ext_mgr.save(proto, host, int(port), username, password, label,
-                                owner=self._get_session_user())
+                                owner=self._get_session_user(), private_key=private_key,
+                                passphrase=passphrase, use_default=use_default)
             self.send_json({"id": cid, "success": True})
 
         elif path == "/api/ext/delete":
@@ -2242,6 +2270,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 r = delete_user(uname, remove_home=bool(data.get("remove_home", True)))
                 invalidate_role_cache(uname)
                 self.send_json(r)
+
+        elif path == "/api/security/ban":
+            if self._require_superadmin(): return
+            if _action_rate_limited("security", client_ip(self), max_hits=20):
+                self.send_json({"success": False, "error": "Zu viele Aktionen — bitte kurz warten."}, 429)
+                return
+            self.send_json(security_ban(data.get("ip", ""), self._get_session_user(), client_ip(self)))
 
         elif path == "/api/security/unban":
             if self._require_superadmin(): return
@@ -2916,12 +2951,31 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             _ws_send(sock, b"\r\nFehler: python3-paramiko ist nicht installiert.\r\n")
             return
 
+        username = conn.get("username") or ""
+        password = conn.get("_password") or ""
+        key_text = conn.get("_private_key") or ""
+        key_pass = conn.get("_passphrase") or ""
+        if conn.get("use_default"):
+            d = ssh_default_secret(conn.get("owner", ""))
+            username = username or d.get("username", "")
+            password = password or d.get("password", "")
+            if not key_text:
+                key_text, key_pass = d.get("private_key", ""), d.get("passphrase", "")
+        pkey = None
+        if key_text:
+            pkey, _kerr = load_pkey(key_text, key_pass or None)
+            if _kerr:
+                _ws_send(sock, f"\r\nSSH Fehler: {_kerr}\r\n".encode())
+                return
+        if not username:
+            _ws_send(sock, b"\r\nSSH Fehler: kein Benutzername (Verbindung oder Standard-Zugangsdaten)\r\n")
+            return
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             ssh.connect(
                 conn["host"], port=conn["port"],
-                username=conn["username"], password=conn["_password"],
+                username=username, password=password or None, pkey=pkey,
                 timeout=15, look_for_keys=False, allow_agent=False,
             )
             channel = ssh.invoke_shell(term="xterm-256color", width=220, height=50)

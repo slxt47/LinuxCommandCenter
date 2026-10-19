@@ -25,7 +25,33 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
+from dashboard.base import DATA_DIR
 from dashboard.consoles import _proxy_mgr, _ws_unregister_port
+
+# Verbindungen ueberleben Neustarts (seit 19.10.2026). Enthaelt Passwoerter/Schluessel -> 0600.
+CONN_FILE = DATA_DIR / "ext_connections.json"
+_PERSIST_KEYS = ("id", "proto", "host", "port", "username", "_password", "_private_key",
+                 "_passphrase", "use_default", "label", "owner")
+
+
+def load_pkey(text, passphrase=None):
+    """Privaten SSH-Schluessel (OpenSSH/PEM: Ed25519, ECDSA, RSA) laden.
+    Liefert (pkey, fehlertext)."""
+    import io
+    import paramiko
+    last = "Unbekanntes Schlüsselformat"
+    for cls in (paramiko.Ed25519Key, paramiko.ECDSAKey, paramiko.RSAKey):
+        try:
+            return cls.from_private_key(io.StringIO(text), password=passphrase or None), None
+        except paramiko.PasswordRequiredException:
+            return None, "Schlüssel ist verschlüsselt – Passphrase angeben"
+        except paramiko.SSHException as e:
+            last = str(e) or last
+        except Exception as e:
+            last = str(e) or last
+    if any(w in last.lower() for w in ("passphrase", "password", "checkints", "decrypt")):
+        return None, "Passphrase falsch oder fehlt"
+    return None, f"Schlüssel ungültig: {last}"
 
 class ExtConnManager:
     """Manages user-defined external VNC/SPICE/SSH connections."""
@@ -35,8 +61,28 @@ class ExtConnManager:
     def __init__(self):
         self._conns = {}
         self._lock  = threading.Lock()
+        self._load()
 
-    def save(self, proto, host, port, username="", password="", label="", owner=""):
+    def _load(self):
+        try:
+            with open(CONN_FILE, encoding="utf-8") as fh:
+                for c in json.load(fh):
+                    c.update(status="idle", _proxy_port=None, _proxy_proc=None)
+                    self._conns[c["id"]] = c
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    def _persist(self):
+        """Nur unter self._lock aufrufen."""
+        data = [{k: c.get(k) for k in _PERSIST_KEYS} for c in self._conns.values()]
+        tmp = f"{CONN_FILE}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=1)
+        os.replace(tmp, CONN_FILE)
+
+    def save(self, proto, host, port, username="", password="", label="", owner="",
+             private_key="", passphrase="", use_default=False):
         cid = secrets.token_urlsafe(12)
         with self._lock:
             self._conns[cid] = {
@@ -46,16 +92,23 @@ class ExtConnManager:
                 "port":     int(port),
                 "username": username,
                 "_password": password,
+                "_private_key": private_key,
+                "_passphrase": passphrase,
+                "use_default": bool(use_default),
                 "label":    label or f"{proto.upper()} — {host}:{port}",
                 "status":   "idle",
                 "_proxy_port": None,
                 "_proxy_proc": None,
                 "owner":    owner,
             }
+            self._persist()
         return cid
 
     def _public(self, c):
-        return {k: v for k, v in c.items() if not k.startswith("_")}
+        pub = {k: v for k, v in c.items() if not k.startswith("_")}
+        pub["has_key"] = bool(c.get("_private_key"))
+        pub["has_password"] = bool(c.get("_password"))
+        return pub
 
     def get(self, cid, with_password=False, owner="", is_admin=False):
         with self._lock:
@@ -118,6 +171,7 @@ class ExtConnManager:
             if not is_admin and c.get("owner") != owner:
                 raise PermissionError("Keine Berechtigung")
             self._conns.pop(cid)
+            self._persist()
             _ws_unregister_port(c.get("_proxy_port"))
             if c.get("_proxy_proc"):
                 try:

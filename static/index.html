@@ -62,9 +62,17 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
         <span class="nav-tooltip">Sicherheit</span>
       </button>
+      <button id="nav-btn-notifications" class="nav-item" onclick="showPage('notifications')" title="Benachrichtigungen" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span class="nav-tooltip">Benachrichtigungen</span>
+      </button>
       <button id="nav-btn-users" class="nav-item" onclick="showPage('users')" title="Benutzer" style="display:none;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span class="nav-tooltip">Benutzer</span>
+      </button>
+      <button id="nav-btn-settings" class="nav-item" onclick="showPage('settings')" title="Einstellungen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="nav-tooltip">Einstellungen</span>
       </button>
     </div>
     <div style="margin-top:auto;padding-bottom:8px;">
@@ -675,6 +683,65 @@
     </div>
 
     <!-- ═══ Benutzerverwaltung ═══ -->
+    <div id="page-settings" class="page">
+      <div class="header-bar">
+        <h1 class="header-title"><span>Einstellungen</span></h1>
+      </div>
+      <div class="set-grid">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Sichtbare Tabs</div></div>
+          <p class="set-hint">Ausgeblendete Tabs verschwinden nur aus deiner Seitenleiste – Rechte ändern sich nicht. Gilt für deinen Benutzer auf allen Geräten.</p>
+          <div id="set-tabs" class="set-tabs"></div>
+          <div class="set-actions"><button class="btn btn-primary" onclick="saveTabPrefs()">Speichern</button></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Standard-SSH-Zugangsdaten</div></div>
+          <p class="set-hint">Werden bei Verbindungen mit „Standard-Zugangsdaten verwenden“ für leere Felder genutzt. Passwort und Schlüssel werden nur auf dem Server gespeichert und nie wieder angezeigt.</p>
+          <div class="set-form">
+            <label class="conn-label">Benutzername</label>
+            <input id="set-ssh-user" type="text" class="conn-input" placeholder="z. B. root" autocomplete="off">
+            <label class="conn-label">Passwort <span id="set-ssh-pw-state" class="set-state"></span></label>
+            <input id="set-ssh-pass" type="password" class="conn-input" placeholder="leer lassen = unverändert" autocomplete="new-password">
+            <label class="conn-label">Privater Schlüssel <span id="set-ssh-key-state" class="set-state"></span></label>
+            <textarea id="set-ssh-key" class="conn-input conn-key" rows="4" spellcheck="false" placeholder="leer lassen = unverändert&#10;-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+            <label class="conn-label">Passphrase des Schlüssels (optional)</label>
+            <input id="set-ssh-keypass" type="password" class="conn-input" placeholder="nur bei verschlüsseltem Schlüssel" autocomplete="new-password">
+          </div>
+          <div id="set-ssh-err" class="set-err"></div>
+          <div class="set-actions">
+            <button class="btn btn-primary" onclick="saveSshDefaults()">Speichern</button>
+            <button class="btn" onclick="clearSshDefault('password')">Passwort löschen</button>
+            <button class="btn btn-danger" onclick="clearSshDefault('key')">Schlüssel löschen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="page-notifications" class="page">
+      <div class="header-bar">
+        <h1 class="header-title"><span>Benachrichtigungen</span> (ntfy)</h1>
+        <div class="header-actions">
+          <label class="sec-auto" title="Alle 30 Sekunden neu laden"><input type="checkbox" id="ntf-auto" checked> Auto</label>
+          <a class="btn" id="ntf-open" href="#" target="_blank" rel="noopener" style="display:none;">ntfy öffnen</a>
+          <button class="btn" onclick="loadNotifications()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Aktualisieren
+          </button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header ntf-head">
+          <div class="ntf-chips" id="ntf-chips"></div>
+          <div class="ntf-range" role="group" aria-label="Zeitraum">
+            <button class="ntf-range-btn" data-since="1h">1 Std</button>
+            <button class="ntf-range-btn" data-since="6h">6 Std</button>
+            <button class="ntf-range-btn active" data-since="24h">24 Std</button>
+          </div>
+        </div>
+        <div class="ntf-list" id="ntf-list"><div class="ntf-empty">Lade …</div></div>
+      </div>
+    </div>
+
     <div id="page-users" class="page">
       <div class="header-bar">
         <h1 class="header-title"><span>Benutzer</span>verwaltung</h1>
@@ -716,7 +783,7 @@
         <div class="ids-tiles" id="ids-tiles"></div>
         <div class="ids-charts">
           <figure class="ids-fig">
-            <figcaption><span class="ids-fig-title">Datenverkehr enp5s0 <span class="ids-fig-sub">letzte 10 Min · Mbit/s</span></span>
+            <figcaption><span class="ids-fig-title">Datenverkehr <span id="ids-iface">eth0</span> <span class="ids-fig-sub">letzte 10 Min · Mbit/s</span></span>
               <span class="ids-legend" id="ids-leg-traffic"></span></figcaption>
             <div class="ids-canvas-wrap"><canvas id="ids-chart-traffic" aria-label="Datenverkehr ein- und ausgehend"></canvas>
               <div class="ids-tip" id="ids-tip-traffic"></div></div>
@@ -743,7 +810,13 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
             Gesperrte IPs <span class="card-badge badge-red" id="sec-ban-count">–</span>
           </div>
-          <input type="text" id="sec-ban-search" class="header-search" placeholder="IP, Anwendung oder Jail suchen..." autocomplete="off">
+          <div class="sec-head-actions">
+            <input type="text" id="sec-ban-search" class="header-search" placeholder="IP, Anwendung oder Jail suchen..." autocomplete="off">
+            <form class="sec-ban-form" onsubmit="event.preventDefault(); secBan();">
+              <input type="text" id="sec-ban-ip" class="header-search" placeholder="IP sperren…" autocomplete="off" spellcheck="false" inputmode="text">
+              <button type="submit" class="btn btn-danger">Sperren</button>
+            </form>
+          </div>
         </div>
         <div class="sec-chips" id="sec-jail-chips"></div>
         <div class="sec-myip" id="sec-myip"></div>
@@ -1467,8 +1540,17 @@
         </div>
         <div>
           <label class="conn-label">Passwort</label>
-          <input id="conn-pass" type="password" class="conn-input" placeholder="••••••••">
+          <input id="conn-pass" type="password" class="conn-input" placeholder="••••••••" autocomplete="new-password">
         </div>
+        <div>
+          <label class="conn-label">Privater Schlüssel (optional)</label>
+          <textarea id="conn-key" class="conn-input conn-key" rows="3" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+        </div>
+        <div>
+          <label class="conn-label">Passphrase des Schlüssels (optional)</label>
+          <input id="conn-keypass" type="password" class="conn-input" placeholder="nur bei verschlüsseltem Schlüssel" autocomplete="new-password">
+        </div>
+        <label class="conn-check"><input type="checkbox" id="conn-usedef"> Standard-Zugangsdaten verwenden <span>(aus Einstellungen, für leere Felder)</span></label>
       </div>
       <div id="conn-err" style="display:none;color:var(--red);font-size:12px;font-family:var(--font-mono);padding:8px 12px;background:var(--red-glow);border-radius:6px;border:1px solid rgba(239,68,68,.25);"></div>
       <button class="btn btn-primary" style="width:100%;padding:12px;font-size:14px;" onclick="saveConn()">Verbindung speichern</button>

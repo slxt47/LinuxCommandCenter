@@ -594,7 +594,7 @@ _LOGIN_HTML = """\
   --bg-void:#06080d;--bg-card:#151d2e;--bg-input:#0d1320;
   --border-mid:#2a3a52;--border-glow:#334766;
   --text-primary:#e2e8f0;--text-secondary:#8b9dc3;--text-muted:#4a5e80;
-  --accent:#00e87b;--accent-dim:#00c968;--accent-glow:rgba(0,232,123,.15);
+  --accent:#3d9bff;--accent-dim:#2b84ea;--accent-glow:rgba(61,155,255,.15);
   --red:#ef4444;--red-glow:rgba(239,68,68,.12);
   --font-mono:'JetBrains Mono',monospace;
   --font-sans:'Space Grotesk',system-ui,sans-serif;
@@ -606,8 +606,8 @@ body{
 }
 body::before{
   content:'';position:fixed;inset:0;pointer-events:none;
-  background-image:linear-gradient(rgba(0,232,123,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(0,232,123,.03) 1px,transparent 1px);
+  background-image:linear-gradient(rgba(61,155,255,.03) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(61,155,255,.03) 1px,transparent 1px);
   background-size:60px 60px;
 }
 .box{

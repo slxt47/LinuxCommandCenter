@@ -68,6 +68,8 @@ BROWSER_SWAP_EXTRA = 4 * 1024 ** 3    # zusätzlich erlaubter Swap
 BROWSER_CPU_LIMIT = 4                 # Kerne je Browser-Container
 # Firefox-Policy (Autoplay für Audio+Video blockieren), Host-Pfad für den Bind.
 BROWSER_FF_POLICIES = "/var/lib/linux-dashboard/firefox-policies.json"
+# KasmVNC-Konfiguration (legt install.sh aus config/kasmvnc.yaml an), Host-Pfad für den Bind.
+BROWSER_KASMVNC_YAML = "/var/lib/linux-dashboard/kasmvnc.yaml"
 
 # ─── Runaway-Tab-Wächter ─────────────────────────────────────────────────────
 # Ein Tab-Prozess (firefox -contentproc -isForBrowser), der über RUNAWAY_WINDOW
@@ -254,9 +256,7 @@ class BrowserSessionManager:
             "HostConfig": {
                 "PortBindings": {"6901/tcp": [{"HostPort": str(port)}]},
                 "ShmSize": 2 * 1024 * 1024 * 1024,
-                # Mount our kasmvnc.yaml so it takes precedence over the container defaults,
-                # fixing the FrameRate/DynamicQualityMax overrides from the vncserver wrapper.
-                "Binds": ["/var/lib/linux-dashboard/kasmvnc.yaml:/etc/kasmvnc/kasmvnc.yaml:ro"],
+                "Binds": [],
                 # Ohne Restart-Policy bleibt der Container nach einem Host-Neustart
                 # gestoppt liegen (und wurde früher von recover() samt Profil gelöscht).
                 "RestartPolicy": {"Name": "unless-stopped"},
@@ -268,6 +268,13 @@ class BrowserSessionManager:
                 "NanoCpus": BROWSER_CPU_LIMIT * 10 ** 9,
             },
         }
+        # Mount our kasmvnc.yaml so it takes precedence over the container defaults,
+        # fixing the FrameRate/DynamicQualityMax overrides from the vncserver wrapper.
+        # Nur wenn sie als Datei existiert: Fehlt sie, legt Docker an ihrer Stelle ein
+        # Verzeichnis an und der Container-Start scheitert mit HTTP 400.
+        if os.path.isfile("/data/" + os.path.basename(BROWSER_KASMVNC_YAML)):
+            body["HostConfig"]["Binds"].append(
+                f"{BROWSER_KASMVNC_YAML}:/etc/kasmvnc/kasmvnc.yaml:ro")
         if os.path.exists("/data/" + os.path.basename(BROWSER_FF_POLICIES)):
             body["HostConfig"]["Binds"].append(
                 f"{BROWSER_FF_POLICIES}:/etc/firefox/policies/policies.json:ro")

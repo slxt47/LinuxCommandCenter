@@ -219,6 +219,10 @@ if [ $DASH -eq 1 ]; then
   dashboard_env
   mkdir -p "$DATA_DIR"
   touch "$DATA_DIR/auth.log"
+  # KasmVNC-Konfiguration für Browser-Sessions. Ein Verzeichnis an dieser Stelle hat
+  # Docker angelegt, als die Datei fehlte (Browser-Start scheiterte dann mit HTTP 400).
+  [ -d "$DATA_DIR/kasmvnc.yaml" ] && rmdir "$DATA_DIR/kasmvnc.yaml" 2>/dev/null || true
+  [ -f "$DATA_DIR/kasmvnc.yaml" ] || install -m 644 config/kasmvnc.yaml "$DATA_DIR/kasmvnc.yaml"
 
   log "Baue Image (beim ersten Mal einige Minuten)..."
   compose build

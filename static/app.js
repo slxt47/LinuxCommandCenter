@@ -811,7 +811,7 @@ function getBarClass(percent) {
 
 // Rollenmodell (siehe dashboard/auth.py): superadmin (root, jokergame) = alles;
 // admin (Gruppe dashadmin) = eigene VMs + Browser + Verbindungen; user = Browser + Verbindungen.
-const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security']);
+const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications']);
 const _ADMIN_PAGES = new Set(['vms']);
 const _ROLE_RANK = { user: 0, admin: 1, superadmin: 2 };
 function roleAtLeast(min) { return (_ROLE_RANK[window._userRole] ?? -1) >= (_ROLE_RANK[min] ?? 99); }
@@ -851,6 +851,8 @@ function showPage(page) {
     case 'users': loadUsers(); break;
     case 'docker': loadDocker(); break;
     case 'security': loadSecurity(); break;
+    case 'notifications': loadNotifications(); break;
+    case 'settings': renderSettings(); break;
   }
 }
 
@@ -1321,7 +1323,7 @@ async function initUserRole() {
   // Benutzerverwaltung und Docker nur für Superadmins sichtbar (Buttons starten
   // versteckt — Docker-Zugriff über den Socket ist faktisch Root auf dem Host)
   if (isSuperadmin()) {
-    for (const p of ['users', 'docker', 'security']) {
+    for (const p of ['users', 'docker', 'security', 'notifications']) {
       const b = document.getElementById(`nav-btn-${p}`);
       if (b) b.style.display = '';
     }
@@ -1337,6 +1339,7 @@ async function initUserRole() {
   }
   // If currently on a restricted page, redirect to dashboard
   if (!pageAllowed(currentPage)) showPage('dashboard');
+  loadPrefs();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -3508,6 +3511,9 @@ function openConnModal() {
   document.getElementById('conn-port').value  = '22';
   document.getElementById('conn-user').value  = '';
   document.getElementById('conn-pass').value  = '';
+  document.getElementById('conn-key').value   = '';
+  document.getElementById('conn-keypass').value = '';
+  document.getElementById('conn-usedef').checked = false;
   document.getElementById('conn-err').style.display = 'none';
   document.getElementById('conn-modal').style.display = 'flex';
 }
@@ -3532,6 +3538,13 @@ async function saveConn() {
     password: document.getElementById('conn-pass').value,
     label:    document.getElementById('conn-label').value.trim(),
   };
+  if (PROTO_SHOW_AUTH.has(_selectedProto)) {
+    body.private_key = document.getElementById('conn-key').value.trim();
+    body.passphrase  = document.getElementById('conn-keypass').value;
+    body.use_default = document.getElementById('conn-usedef').checked;
+    if (!body.use_default && !body.username) { errEl.textContent = 'Benutzername fehlt (oder Standard-Zugangsdaten verwenden).'; errEl.style.display = 'block'; return; }
+    if (!body.use_default && !body.password && !body.private_key) { errEl.textContent = 'Passwort oder Schlüssel angeben (oder Standard-Zugangsdaten verwenden).'; errEl.style.display = 'block'; return; }
+  }
   const r = await api('/api/ext/save', { method: 'POST', body: JSON.stringify(body) });
   if (r.error) { errEl.textContent = r.error; errEl.style.display = 'block'; return; }
   closeConnModal();
@@ -3561,6 +3574,7 @@ async function loadConnections() {
         ${escHtml(c.host)}:${c.port}
         ${c.username ? ' · ' + escHtml(c.username) : ''}
       </div>
+      ${(c.proto === 'ssh' || c.proto === 'scp') ? `<div class="conn-auth-tags">${c.has_key ? '<span>🔑 Schlüssel</span>' : ''}${c.has_password ? '<span>Passwort</span>' : ''}${c.use_default ? '<span>Standard-Zugang</span>' : ''}</div>` : ''}
       <div style="display:flex;gap:8px;">
         <button class="btn btn-primary" style="flex:1;justify-content:center;" onclick="openConn('${c.id}')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
@@ -6189,7 +6203,7 @@ const _ids = {
   series: {
     angriff: { label: 'Angreifer gesperrt', color: '#3987e5' },
     ausgang: { label: 'Ziel nach außen gesperrt', color: '#d95926' },
-    notiert: { label: 'Nur notiert', color: '#199e70' },
+    notiert: { label: 'Nur notiert', color: '#2f7fd6' },
     warnung: { label: 'DNS-Warnung', color: '#c98500' },
   },
   lines: { rx: { label: 'Eingehend', color: '#3987e5' }, tx: { label: 'Ausgehend', color: '#d95926' } },
@@ -6238,6 +6252,7 @@ async function idsLoad() {
     const cut = d.now - 600;
     _ids.traffic = _ids.traffic.filter(p => p[0] >= cut);
     _ids.data = d;
+    if (d.iface) document.getElementById('ids-iface').textContent = d.iface;
     idsRenderTiles(d);
     idsRenderRecent(d.recent || []);
     idsDraw();
@@ -6613,6 +6628,23 @@ function renderSecEvents() {
     : (_sec.total ? `Alle ${_sec.total} Meldungen angezeigt` : '');
 }
 
+// Manuelle Sperre (seit 19.10.2026): Jail "manuell" = Cloudflare-Rand + Server-Firewall, 4 Wochen
+async function secBan() {
+  const inp = document.getElementById('sec-ban-ip');
+  const ip = (inp.value || '').trim();
+  if (!ip) { inp.focus(); return; }
+  const ok = await uiConfirm(
+    `IP ${ip} sperren?\n\nDie IP wird 4 Wochen lang am Cloudflare-Rand (alle Seiten) und an der Server-Firewall (SSH, VPN) gesperrt.\nAufheben jederzeit über „Entsperren“.`,
+    { okLabel: 'Sperren', danger: true });
+  if (!ok) return;
+  toast(`Sperre ${ip} …`, 'info', 3000);
+  const r = await api('/api/security/ban', { method: 'POST', body: JSON.stringify({ ip }) });
+  if (r.success) { toast(`${r.ip} gesperrt (Jail manuell)`, 'success'); inp.value = ''; }
+  else toast(`Sperren fehlgeschlagen: ${r.error || 'siehe Protokoll'}`, 'error', 8000);
+  loadSecBans();
+  loadSecEvents(true);
+}
+
 async function secUnban(ip) {
   const b = _sec.bans.find(x => x.ip === ip);
   const where = b ? b.jails.map(j => j.jail).join(', ') : 'alle Jails';
@@ -6627,4 +6659,153 @@ async function secUnban(ip) {
   else toast(`Entsperren unvollständig: ${r.error || (r.still_banned || []).join(', ') || 'siehe Protokoll'}`, 'error', 8000);
   loadSecBans();
   loadSecEvents(true);
+}
+
+// ─── Benachrichtigungen (ntfy) — seit 16.10.2026 ─────────────────────
+// Backend: dashboard/notify.py, GET /api/notifications. Liest mit einem
+// Nur-Lese-Token die zwischengespeicherten Nachrichten des eigenen ntfy-Servers.
+// Titel/Texte koennen Angreifer-Input enthalten (fail2ban): alles wird escapt.
+const _ntf = { timer: null, wired: false, since: '24h', topic: '', data: null };
+const _NTF_TOPIC_LABEL = { ssh: 'SSH', fail2ban: 'fail2ban', logins: 'Web-Logins', kernel: 'Kernel' };
+
+function _ntfWire() {
+  if (_ntf.wired) return;
+  _ntf.wired = true;
+  document.querySelectorAll('#page-notifications .ntf-range-btn').forEach(b => b.addEventListener('click', () => {
+    _ntf.since = b.dataset.since;
+    document.querySelectorAll('#page-notifications .ntf-range-btn').forEach(x => x.classList.toggle('active', x === b));
+    loadNotifications();
+  }));
+  // Auto-Aktualisierung nur, solange der Reiter offen und sichtbar ist
+  _ntf.timer = setInterval(() => {
+    if (currentPage !== 'notifications' || document.visibilityState !== 'visible') return;
+    if (!document.getElementById('ntf-auto').checked) return;
+    loadNotifications();
+  }, 30000);
+}
+
+async function loadNotifications() {
+  _ntfWire();
+  const d = await api(`/api/notifications?since=${encodeURIComponent(_ntf.since)}`);
+  _ntf.data = d;
+  renderNotifications();
+}
+
+function _ntfFilter(topic) {
+  _ntf.topic = (_ntf.topic === topic) ? '' : topic;
+  renderNotifications();
+}
+
+function renderNotifications() {
+  const d = _ntf.data || {};
+  const list = document.getElementById('ntf-list');
+  const chips = document.getElementById('ntf-chips');
+  const open = document.getElementById('ntf-open');
+  if (d.public_url) { open.href = d.public_url; open.style.display = ''; } else { open.style.display = 'none'; }
+  if (d.error && !d.messages) { list.innerHTML = `<div class="ntf-empty">${escHtml(d.error)}</div>`; chips.innerHTML = ''; return; }
+  if (d.configured === false) {
+    list.innerHTML = '<div class="ntf-empty">ntfy ist nicht eingerichtet (/var/lib/linux-dashboard/ntfy.json fehlt).</div>';
+    chips.innerHTML = ''; return;
+  }
+  const msgs = d.messages || [];
+  const counts = {};
+  for (const m of msgs) counts[m.topic] = (counts[m.topic] || 0) + 1;
+  const topics = d.topics || [];
+  chips.innerHTML = [`<button class="ntf-chip${_ntf.topic ? '' : ' active'}" onclick="_ntfFilter('')">Alle <span>${msgs.length}</span></button>`]
+    .concat(topics.map(t => `<button class="ntf-chip${_ntf.topic === t ? ' active' : ''}" onclick="_ntfFilter('${escHtml(t)}')">${escHtml(_NTF_TOPIC_LABEL[t] || t)} <span>${counts[t] || 0}</span></button>`))
+    .join('');
+  const shown = _ntf.topic ? msgs.filter(m => m.topic === _ntf.topic) : msgs;
+  let html = '';
+  if (d.error) html += `<div class="ntf-empty ntf-warn">${escHtml(d.error)}</div>`;
+  if (!shown.length) {
+    html += '<div class="ntf-empty">Keine Benachrichtigungen im gewählten Zeitraum.</div>';
+  } else {
+    html += shown.map(m => {
+      const t = new Date(m.time * 1000);
+      const when = t.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const prio = m.priority >= 5 ? 'urgent' : m.priority >= 4 ? 'high' : m.priority <= 2 ? 'low' : '';
+      const body = escHtml(m.message).replace(/ \| /g, '<br>').replace(/\n/g, '<br>');
+      return `<div class="ntf-item ${prio ? 'ntf-' + prio : ''}">
+        <div class="ntf-meta"><span class="ntf-time">${escHtml(when)}</span>
+          <span class="ntf-topic">${escHtml(_NTF_TOPIC_LABEL[m.topic] || m.topic)}</span>
+          ${prio === 'high' || prio === 'urgent' ? `<span class="ntf-prio">${prio === 'urgent' ? 'dringend' : 'hoch'}</span>` : ''}</div>
+        <div class="ntf-title">${escHtml(m.title || '(ohne Titel)')}</div>
+        <div class="ntf-body">${body}</div>
+      </div>`;
+    }).join('');
+  }
+  list.innerHTML = html;
+}
+
+
+// ─── Einstellungen (seit 19.10.2026) ─────────────────────────────────
+// Backend: dashboard/prefs.py, GET/POST /api/prefs. Tabs ausblenden ist rein
+// optisch (Rechte regelt die Rolle); SSH-Geheimnisse kommen nie zurück zum Browser.
+const _TAB_LABELS = { processes: 'Prozesse', terminal: 'Terminal', updates: 'Updates', vms: 'VMs',
+  docker: 'Docker', services: 'Services', connections: 'Verbindungen', browser: 'Browser',
+  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer' };
+window._prefs = null;
+
+async function loadPrefs() {
+  const p = await api('/api/prefs');
+  if (p && !p.error) { window._prefs = p; applyTabPrefs(); }
+}
+
+function applyTabPrefs() {
+  const p = window._prefs; if (!p) return;
+  const hidden = new Set(p.hidden_pages || []);
+  for (const page of (p.hideable_pages || [])) {
+    const btn = document.getElementById(`nav-btn-${page}`);
+    if (btn) btn.style.display = (pageAllowed(page) && !hidden.has(page)) ? '' : 'none';
+  }
+  if (hidden.has(currentPage)) showPage('dashboard');
+}
+
+function renderSettings() {
+  const p = window._prefs;
+  if (!p) { loadPrefs().then(() => window._prefs && renderSettings()); return; }
+  const hidden = new Set(p.hidden_pages || []);
+  document.getElementById('set-tabs').innerHTML = (p.hideable_pages || []).filter(pageAllowed).map(page => `
+    <label class="set-tab"><span>${escHtml(_TAB_LABELS[page] || page)}</span>
+      <span class="set-switch"><input type="checkbox" data-page="${escHtml(page)}" ${hidden.has(page) ? '' : 'checked'}><span class="set-slider"></span></span>
+      <span class="set-yn">${hidden.has(page) ? 'NEIN' : 'JA'}</span></label>`).join('');
+  document.querySelectorAll('#set-tabs input').forEach(i => i.addEventListener('change', () => {
+    i.closest('.set-tab').querySelector('.set-yn').textContent = i.checked ? 'JA' : 'NEIN';
+  }));
+  const d = p.ssh_default || {};
+  document.getElementById('set-ssh-user').value = d.username || '';
+  document.getElementById('set-ssh-pass').value = '';
+  document.getElementById('set-ssh-key').value = '';
+  document.getElementById('set-ssh-keypass').value = '';
+  document.getElementById('set-ssh-pw-state').textContent = d.has_password ? '✓ gespeichert' : '– keins';
+  document.getElementById('set-ssh-key-state').textContent = d.has_key ? '✓ gespeichert' : '– keiner';
+  document.getElementById('set-ssh-err').textContent = '';
+}
+
+async function _savePrefs(body, okMsg) {
+  const r = await api('/api/prefs', { method: 'POST', body: JSON.stringify(body) });
+  if (r.success) { window._prefs = r.prefs; applyTabPrefs(); renderSettings(); toast(okMsg, 'success'); return true; }
+  const e = document.getElementById('set-ssh-err'); if (e) e.textContent = r.error || 'Speichern fehlgeschlagen';
+  toast(r.error || 'Speichern fehlgeschlagen', 'error', 6000);
+  return false;
+}
+
+function saveTabPrefs() {
+  const hidden = [...document.querySelectorAll('#set-tabs input')].filter(i => !i.checked).map(i => i.dataset.page);
+  _savePrefs({ hidden_pages: hidden }, 'Tabs gespeichert');
+}
+
+function saveSshDefaults() {
+  _savePrefs({ ssh_default: {
+    username: document.getElementById('set-ssh-user').value.trim(),
+    password: document.getElementById('set-ssh-pass').value,
+    private_key: document.getElementById('set-ssh-key').value.trim(),
+    passphrase: document.getElementById('set-ssh-keypass').value,
+  } }, 'Standard-Zugangsdaten gespeichert');
+}
+
+async function clearSshDefault(what) {
+  const ok = await uiConfirm(what === 'key' ? 'Gespeicherten Schlüssel löschen?' : 'Gespeichertes Passwort löschen?', { okLabel: 'Löschen', danger: true });
+  if (!ok) return;
+  _savePrefs({ ssh_default: what === 'key' ? { clear_key: true } : { clear_password: true } }, 'Gelöscht');
 }

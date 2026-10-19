@@ -1,0 +1,20 @@
+# KasmVNC-Konfiguration für Browser-Sessions (wird von install.sh nach
+# /var/lib/linux-dashboard/kasmvnc.yaml kopiert und in jeden Browser-Container
+# eingebunden). Überschreibt die Vorgaben des vncserver-Wrappers im Image.
+network:
+  ssl:
+    pem_certificate: ${HOME}/.vnc/self.pem
+    pem_key: ${HOME}/.vnc/self.pem
+  udp:
+    public_ip: 127.0.0.1
+runtime_configuration:
+  allow_override_standard_vnc_server_settings: true
+  allow_override_list:
+    - pointer.enabled
+server:
+  allow_environment_variables_to_override_config_settings: true
+encoding:
+  max_frame_rate: 24
+  rect_encoding_mode:
+    min_quality: 3
+    max_quality: 6
