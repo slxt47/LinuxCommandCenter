@@ -2,6 +2,18 @@
 
 ## 2.0.1 – 2026-10-28
 
+**Entsperren leichter**
+- Eingabefeld „IP(s) entsperren“ im Reiter Sicherheit: eine oder mehrere IPs einfügen, auch solche,
+  die nur noch auf der Cloudflare-Liste stehen.
+- Mehrfachauswahl in der Sperrenliste mit „Ausgewählte entsperren“ und „Alle angezeigten entsperren“
+  (zusammen mit den Anwendungs-Filtern, z. B. alle Nextcloud-Sperren).
+- „Meine IP entsperren“ direkt im Hinweis, wenn die eigene IP gesperrt ist.
+- Neuer Endpunkt `POST /api/security/unban-many` (nur Superadmins, höchstens 50 IPs, zählt als eine Aktion).
+
+**Favicon**
+- `favicon.svg`/`favicon.ico` im Stil des App-Icons, auch auf der Login-Seite. Favicon, App-Icons und
+  Manifest sind ohne Anmeldung abrufbar (ohne `..`/`%` im Pfad).
+
 **Sicherheit**
 - Browser-Sessions (KasmVNC) lauschen nur noch auf `127.0.0.1`. Vorher fehlte
   `HostIp`, Docker band den Port an `0.0.0.0` – eine Session war dann ohne

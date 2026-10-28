@@ -1841,3 +1841,13 @@ body::before {
 .conn-auth-tags span { font-family: var(--font-mono); font-size: 10px; color: var(--text-secondary); border: 1px solid var(--border-dim); border-radius: 999px; padding: 2px 8px; }
 .conn-check { flex-wrap: wrap; row-gap: 2px; }
 .conn-check span { flex-basis: 100%; padding-left: 24px; }
+
+/* Leichter entsperren (28.10.2026) */
+.btn-success { border-color: rgba(34,197,94,0.35); color: var(--green, #22c55e); }
+.btn-success:hover { border-color: var(--green, #22c55e); background: rgba(34,197,94,0.12); color: var(--green, #22c55e); }
+.sec-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 12px; color: var(--text-muted); }
+.sec-bulk[hidden] { display: none; }
+.sec-table th.sec-sel, .sec-table td.sec-sel { width: 30px; text-align: center; }
+.sec-sel input { width: 16px; height: 16px; accent-color: var(--accent, #3d9bff); cursor: pointer; }
+.sec-row-sel td { background: rgba(61,155,255,.08); }
+.sec-myip .btn { margin-left: 6px; }

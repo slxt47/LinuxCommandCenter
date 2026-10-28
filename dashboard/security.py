@@ -703,3 +703,32 @@ def security_unban(ip, by):
           flush=True)
     return {"success": ok, "ip": ip, "jails": before, "still_banned": still,
             "output": output[-3000:]}
+
+
+UNBAN_MANY_MAX = 50
+
+
+def security_unban_many(ips, by):
+    """Mehrere IPs nacheinander ueberall freigeben (seit 28.10.2026: Mehrfachauswahl,
+    Eingabefeld und "Meine IP entsperren" im Reiter Sicherheit)."""
+    if not isinstance(ips, list):
+        return {"success": False, "error": "Liste von IPs erwartet"}
+    gueltig, ungueltig = [], []
+    for raw in ips:
+        try:
+            ip = str(ipaddress.ip_address(str(raw).strip()))
+        except ValueError:
+            ungueltig.append(str(raw)[:60])
+            continue
+        if ip not in gueltig:
+            gueltig.append(ip)
+    if not gueltig:
+        return {"success": False, "error": "Keine gültige IP-Adresse", "invalid": ungueltig}
+    if len(gueltig) > UNBAN_MANY_MAX:
+        return {"success": False, "error": f"Höchstens {UNBAN_MANY_MAX} IPs auf einmal"}
+    ergebnisse = [security_unban(ip, by) for ip in gueltig]
+    return {"success": all(r.get("success") for r in ergebnisse),
+            "done": [r["ip"] for r in ergebnisse if r.get("success")],
+            "failed": [{"ip": r.get("ip"), "still_banned": r.get("still_banned"), "error": r.get("error")}
+                       for r in ergebnisse if not r.get("success")],
+            "invalid": ungueltig}

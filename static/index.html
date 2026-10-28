@@ -6,6 +6,8 @@
 <!-- PWA / Installierbarkeit (additiv, ändert kein bestehendes Verhalten) -->
 <meta name="theme-color" content="#06080d">
 <link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -816,17 +818,22 @@
               <input type="text" id="sec-ban-ip" class="header-search" placeholder="IP sperren…" autocomplete="off" spellcheck="false" inputmode="text">
               <button type="submit" class="btn btn-danger">Sperren</button>
             </form>
+            <form class="sec-ban-form" onsubmit="event.preventDefault(); secUnbanInput();">
+              <input type="text" id="sec-unban-ip" class="header-search" placeholder="IP(s) entsperren…" title="Eine oder mehrere IPs (mit Leerzeichen oder Komma getrennt). Funktioniert auch für IPs, die nur noch in der Cloudflare-Liste stehen." autocomplete="off" spellcheck="false">
+              <button type="submit" class="btn btn-success">Entsperren</button>
+            </form>
           </div>
         </div>
         <div class="sec-chips" id="sec-jail-chips"></div>
         <div class="sec-myip" id="sec-myip"></div>
+        <div class="sec-bulk" id="sec-bulk" hidden></div>
         <div class="sec-scroll sec-scroll-bans">
           <table class="process-table sec-table">
             <thead><tr>
-              <th data-bsort="ip">IP</th><th data-bsort="jails">Anwendung / Jail</th><th data-bsort="since">Gesperrt seit</th>
+              <th class="sec-sel"><input type="checkbox" id="sec-sel-all" title="Alle angezeigten auswählen" onclick="secSelAll(this.checked)"></th><th data-bsort="ip">IP</th><th data-bsort="jails">Anwendung / Jail</th><th data-bsort="since">Gesperrt seit</th>
               <th data-bsort="until">Läuft ab</th><th data-bsort="bancount">Sperren</th><th>Rand</th><th></th>
             </tr></thead>
-            <tbody id="sec-ban-tbody"><tr><td colspan="7"><div class="loading-overlay"><span class="spinner"></span> Lade Sperren...</div></td></tr></tbody>
+            <tbody id="sec-ban-tbody"><tr><td colspan="8"><div class="loading-overlay"><span class="spinner"></span> Lade Sperren...</div></td></tr></tbody>
           </table>
         </div>
       </div>
