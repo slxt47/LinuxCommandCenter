@@ -7,8 +7,8 @@ nur noch eine Option.
 
 | | |
 |---|---|
-| Version | siehe `VERSION` (aktuell 2.0.0), Änderungen in `CHANGELOG.md` |
-| Systeme | Debian 12, Ubuntu 22.04 / 24.04 (Schutz-Paket: nur apt-basiert) |
+| Version | siehe `VERSION` (aktuell 2.0.1), Änderungen in `CHANGELOG.md` |
+| Systeme | Debian 12, Ubuntu 22.04 / 24.04, amd64 und arm64 (Schutz-Paket: nur apt-basiert) |
 | Dashboard | Docker-Container `linux-dashboard`, Port 8420 |
 
 ---
@@ -16,7 +16,7 @@ nur noch eine Option.
 ## Installation auf einem neuen Server
 
 ```bash
-git clone https://github.com/JokerGame200/linux-dashboard.git /opt/linux-dashboard
+git clone https://github.com/slxt47/LinuxCommandCenter.git /opt/linux-dashboard
 cd /opt/linux-dashboard
 sudo ./install.sh
 ```

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.1 – 2026-10-28
+
+**Sicherheit**
+- Browser-Sessions (KasmVNC) lauschen nur noch auf `127.0.0.1`. Vorher fehlte
+  `HostIp`, Docker band den Port an `0.0.0.0` – eine Session war dann ohne
+  Dashboard-Login aus dem Netz erreichbar.
+
+**ARM64**
+- Das Image lädt das KasmVNC-Paket passend zur Architektur (`dpkg --print-architecture`)
+  statt fest `amd64` – läuft jetzt auch auf ARM-Servern (z. B. Hetzner CAX).
+
+**Doku**
+- Installationsbefehl im README zeigt auf dieses Repo.
+
 ## 2.0.0 – 2026-10-12
 
 **Dashboard auf aktuellem Stand**

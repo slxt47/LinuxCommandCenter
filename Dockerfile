@@ -33,7 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # KasmVNC-Server (Xkasmvnc), in dem remote-viewer die QEMU-VNC-Konsole
 # als Kiosk anzeigt — gleiche Verbindung/Erfahrung wie Browser-Sessions.
 # (Der KasmVNC-Web-Client wird von Xkasmvnc selbst ausgeliefert.)
-RUN python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/kasmtech/KasmVNC/releases/download/v1.4.0/kasmvncserver_bookworm_1.4.0_amd64.deb','/tmp/kasmvnc.deb')" \
+RUN python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/kasmtech/KasmVNC/releases/download/v1.4.0/kasmvncserver_bookworm_1.4.0_' + __import__('subprocess').check_output(['dpkg','--print-architecture'],text=True).strip() + '.deb','/tmp/kasmvnc.deb')" \
     && apt-get update \
     && apt-get install -y /tmp/kasmvnc.deb virt-viewer matchbox-window-manager xauth xdotool \
     && rm /tmp/kasmvnc.deb \
