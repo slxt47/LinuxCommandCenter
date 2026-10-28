@@ -34,7 +34,7 @@ from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked, load_pkey
 from dashboard.prefs import get_prefs, set_prefs, ssh_default_secret
 from dashboard.networks import list_networks, net_action, net_add_dhcp_host, net_create, net_dhcp_hosts, net_edit, net_get_xml, net_leases, net_remove_dhcp_host, net_set_xml
 from dashboard.storage import iso_delete, iso_download, iso_download_status, iso_list, list_isos, list_pools, list_volumes, vol_create, vol_delete
-from dashboard.security import security_ban, security_bans, security_events, security_unban
+from dashboard.security import security_ban, security_bans, security_events, security_unban, security_unban_many
 from dashboard.notify import ntfy_messages
 from dashboard.ids import ids_live
 from dashboard.sysinfo import get_cpu_info, get_disk_info, get_memory_info, get_network_info, get_services, get_system_info, get_top_processes, get_updates, run_update
@@ -929,6 +929,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_header("Location", "/login")
             self.send_header("Set-Cookie", f"session=; HttpOnly;{self._cookie_secure()} Path=/; SameSite=Strict; Max-Age=0")
             self.end_headers()
+            return
+
+        # Favicon/App-Icons/Manifest sind öffentlich (Login-Seite und Browser-Tab brauchen sie)
+        if (path in ("/favicon.svg", "/favicon.ico", "/manifest.json") or path.startswith("/icons/")) \
+                and ".." not in path and "%" not in path:
+            self._static_asset = True
+            super().do_GET()
             return
 
         # Token-Pfade: überspringen die generische Auth hier und prüfen im jeweiligen
@@ -2284,6 +2291,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.send_json({"success": False, "error": "Zu viele Aktionen — bitte kurz warten."}, 429)
                 return
             self.send_json(security_unban(data.get("ip", ""), self._get_session_user()))
+
+        elif path == "/api/security/unban-many":
+            # Mehrere IPs auf einmal (Mehrfachauswahl/Eingabefeld) - zaehlt als eine Aktion
+            if self._require_superadmin(): return
+            if _action_rate_limited("security", client_ip(self), max_hits=20):
+                self.send_json({"success": False, "error": "Zu viele Aktionen — bitte kurz warten."}, 429)
+                return
+            self.send_json(security_unban_many(data.get("ips", []), self._get_session_user()))
 
         elif path == "/api/service/action":
             name = data.get("name", "")

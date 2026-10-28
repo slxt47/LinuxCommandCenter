@@ -254,7 +254,9 @@ class BrowserSessionManager:
             "Env": env,
             "ExposedPorts": {"6901/tcp": {}},
             "HostConfig": {
-                "PortBindings": {"6901/tcp": [{"HostPort": str(port)}]},
+                # Nur lokal: das Dashboard (Host-Netz) spricht 127.0.0.1 an; ohne
+                # HostIp lauschte der Browser auf 0.0.0.0 (Audit 2026-10-20).
+                "PortBindings": {"6901/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]},
                 "ShmSize": 2 * 1024 * 1024 * 1024,
                 "Binds": [],
                 # Ohne Restart-Policy bleibt der Container nach einem Host-Neustart

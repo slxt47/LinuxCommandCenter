@@ -6463,10 +6463,12 @@ async function loadSecBans() {
   const d = await api('/api/security/bans');
   const tb = document.getElementById('sec-ban-tbody');
   if (d.error) {
-    tb.innerHTML = `<tr><td colspan="7" style="color:var(--red)">${escHtml(d.error)}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8" style="color:var(--red)">${escHtml(d.error)}</td></tr>`;
     return;
   }
   _sec.bans = d.bans || [];
+  // Auswahl auf noch gesperrte IPs beschränken
+  _sec.sel = new Set([...(_sec.sel || [])].filter(ip => _sec.bans.some(b => b.ip === ip)));
   _sec.myIp = d.my_ip || '';
   _sec.now = d.now || Date.now() / 1000;
   _sec.jails = d.jails || {};
@@ -6475,7 +6477,7 @@ async function loadSecBans() {
   const mine = _sec.bans.find(b => b.mine);
   document.getElementById('sec-myip').innerHTML = _sec.myIp
     ? `Deine aktuelle IP: <span class="sec-ip" onclick="secSearchIp(${_secJs(_sec.myIp)})">${escHtml(_sec.myIp)}</span>` +
-      (mine ? ' — <b style="color:var(--red)">ist gesperrt!</b>' : '')
+      (mine ? ` — <b style="color:var(--red)">ist gesperrt!</b> <button class="btn btn-sm btn-success" onclick="secUnbanMany([${_secJs(_sec.myIp)}], true)">Meine IP entsperren</button>` : '')
     : '';
   renderSecBans();
 }
@@ -6510,8 +6512,10 @@ function renderSecBans() {
   });
 
   const tb = document.getElementById('sec-ban-tbody');
+  _sec.shown = list.map(b => b.ip);
+  secRenderBulk();
   if (!list.length) {
-    tb.innerHTML = `<tr><td colspan="7" style="color:var(--text-muted)">${_sec.bans.length ? 'Keine Treffer.' : 'Keine aktiven Sperren.'}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8" style="color:var(--text-muted)">${_sec.bans.length ? 'Keine Treffer.' : 'Keine aktiven Sperren.'}</td></tr>`;
     return;
   }
   const now = _sec.now || Date.now() / 1000;
@@ -6521,7 +6525,8 @@ function renderSecBans() {
       ((b.known || []).length ? `<span class="sec-tag known" title="Hat sich hier schon erfolgreich angemeldet: ${escHtml(b.known.join(', '))}">bekannt</span>` : '');
     const jails = b.jails.map(j => `<span class="sec-tag ${_secWebJail(j.jail) ? 'web' : ''}" title="Jail ${escHtml(j.jail)}">${escHtml(j.app || j.jail)}${j.app && j.app !== j.jail ? ` <span style="opacity:.6">${escHtml(j.jail)}</span>` : ''}</span>`).join('');
     const until = b.until === -1 ? 'dauerhaft' : b.until ? `in ${_secRel(b.until - now)}` : '—';
-    return `<tr class="${b.mine ? 'sec-row-mine' : ''}">
+    return `<tr class="${b.mine ? 'sec-row-mine' : ''}${_sec.sel.has(b.ip) ? ' sec-row-sel' : ''}">
+      <td class="sec-sel"><input type="checkbox" aria-label="${ip} auswählen" ${_sec.sel.has(b.ip) ? 'checked' : ''} onclick="secSel(${_secJs(b.ip)}, this.checked)"></td>
       <td class="sec-ban-ip"><span class="sec-ip" title="Meldungen zu dieser IP" onclick="secSearchIp(${_secJs(b.ip)})">${ip}</span> ${tags}</td>
       <td class="sec-wrap">${jails}</td>
       <td title="${escHtml(_secTime(b.since))}">${b.since ? 'vor ' + _secRel(now - b.since) : '—'}</td>
@@ -6534,6 +6539,68 @@ function renderSecBans() {
 }
 
 function _secWebJail(j) { return !/^sshd/.test(j); }
+
+// ── Leichter entsperren (seit 28.10.2026): Auswahl, Eingabefeld, "Meine IP" ──
+function secSel(ip, on) {
+  on ? _sec.sel.add(ip) : _sec.sel.delete(ip);
+  renderSecBans();
+}
+function secSelAll(on) {
+  (_sec.shown || []).forEach(ip => on ? _sec.sel.add(ip) : _sec.sel.delete(ip));
+  renderSecBans();
+}
+function secRenderBulk() {
+  const bar = document.getElementById('sec-bulk');
+  const all = document.getElementById('sec-sel-all');
+  const shown = _sec.shown || [];
+  const nSel = _sec.sel.size;
+  if (all) {
+    const selShown = shown.filter(ip => _sec.sel.has(ip)).length;
+    all.checked = shown.length > 0 && selShown === shown.length;
+    all.indeterminate = selShown > 0 && selShown < shown.length;
+  }
+  const gefiltert = shown.length && shown.length < _sec.bans.length;
+  bar.hidden = !nSel && !gefiltert;
+  bar.innerHTML =
+    (nSel ? `<span>${nSel} ausgewählt</span>
+       <button class="btn btn-sm btn-success" onclick="secUnbanMany([..._sec.sel])">Ausgewählte entsperren</button>
+       <button class="btn btn-sm" onclick="_sec.sel.clear(); renderSecBans()">Auswahl aufheben</button>` : '') +
+    (gefiltert ? `<button class="btn btn-sm" onclick="secUnbanMany(_sec.shown.slice())">Alle ${shown.length} angezeigten entsperren</button>` : '');
+}
+function secUnbanInput() {
+  const inp = document.getElementById('sec-unban-ip');
+  const ips = (inp.value || '').split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+  if (!ips.length) { inp.focus(); return; }
+  secUnbanMany(ips).then(ok => { if (ok) inp.value = ''; });
+}
+async function secUnbanMany(ips, ohneFrage) {
+  ips = [...new Set(ips)];
+  if (!ips.length) return false;
+  if (ips.length > 50) { toast('Höchstens 50 IPs auf einmal – bitte die Auswahl verkleinern.', 'error', 6000); return false; }
+  if (!ohneFrage) {
+    const fremd = ips.filter(ip => { const b = _sec.bans.find(x => x.ip === ip); return b && !b.mine && !(b.known || []).length; }).length;
+    const ok = await uiConfirm(
+      (ips.length === 1 ? `IP ${ips[0]} entsperren?` : `${ips.length} IPs entsperren?\n\n${ips.slice(0, 8).join(', ')}${ips.length > 8 ? ' …' : ''}`) +
+      `\n\nJede wird aus allen fail2ban-Jails, den ipsets und der Cloudflare-Sperrliste entfernt.` +
+      (fremd ? `\n\nHinweis: ${fremd === ips.length && fremd === 1 ? 'Diese IP hat' : fremd + ' davon haben'} sich hier noch nie erfolgreich angemeldet.` : ''),
+      { okLabel: ips.length === 1 ? 'Entsperren' : `${ips.length} entsperren`, danger: true });
+    if (!ok) return false;
+  }
+  toast(ips.length === 1 ? `Entsperre ${ips[0]} …` : `Entsperre ${ips.length} IPs … (dauert je IP ein paar Sekunden)`, 'info', 4000);
+  const r = await api('/api/security/unban-many', { method: 'POST', body: JSON.stringify({ ips }) });
+  const done = r.done || [], failed = r.failed || [], invalid = r.invalid || [];
+  done.forEach(ip => _sec.sel.delete(ip));
+  if (done.length && !failed.length && !invalid.length)
+    toast(done.length === 1 ? `${done[0]} entsperrt` : `${done.length} IPs entsperrt`, 'success');
+  else if (r.error && !done.length)
+    toast(`Entsperren fehlgeschlagen: ${r.error}${invalid.length ? ' (' + invalid.join(', ') + ')' : ''}`, 'error', 8000);
+  else
+    toast(`${done.length} entsperrt` + (failed.length ? `, unvollständig: ${failed.map(f => f.ip).join(', ')}` : '') +
+          (invalid.length ? `, ungültig: ${invalid.join(', ')}` : ''), failed.length ? 'error' : 'info', 9000);
+  loadSecBans();
+  loadSecEvents(true);
+  return !!done.length;
+}
 function secBanApp(a) { _sec.banApp = _sec.banApp === a ? '' : a; renderSecBans(); }
 
 async function loadSecEvents(keepCount) {
