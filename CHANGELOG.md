@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.0 – 2026-11-03
+
+**Design wie die slxt-Seiten** (dash.slxt.dev, shop.slxt.org, Nexus, slxt.org; Apple HIG)
+- Hell/dunkel nach System, Himmel-Verlauf mit Sternen und Sternschnuppen (`static/icons/himmel.js`, öffentlich wie die Icons, weil die Anmeldeseite ihn braucht).
+- Systemschrift statt Google Fonts (keine Anfragen an fremde Server mehr), Kennzahlen in gerundeter Anzeige-Schrift.
+- Seitenleiste als Glas, aktiver Reiter als Akzent-Fläche; Karten mit 22 px Radius und weichem Schatten; Pillen-Knöpfe; Dialoge mit fester Fläche.
+- Terminal bleibt in beiden Modi dunkel (ANSI-Farben).
+- Neues Logo (Terminal-Prompt im Nachtquadrat mit Komet und Farbpunkt), App-Icons und Favicon neu; neue Anmeldeseite.
+- Nur Darstellung: alle Variablennamen in `app.css` bleiben, neue Werte stehen oben in `:root`, Feinschliff am Ende der Datei.
+
 ## 2.0.0 – 2026-10-12
 
 **Dashboard auf aktuellem Stand**
