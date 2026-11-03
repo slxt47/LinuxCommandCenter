@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <!-- PWA / Installierbarkeit (additiv, ändert kein bestehendes Verhalten) -->
-<meta name="theme-color" content="#06080d">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1fb">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0e2a">
+<meta name="color-scheme" content="light dark">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -14,7 +16,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Command Center">
 <title>Linux Command Center</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -22,7 +23,7 @@
 <div class="app-layout">
   <!-- ═══ Sidebar ═══ -->
   <nav class="sidebar">
-    <div class="sidebar-logo">CC</div>
+    <div class="sidebar-logo"><img src="/favicon.svg" alt="Command Center" width="42" height="42"></div>
     <div class="nav-items">
       <button id="nav-btn-dashboard" class="nav-item active" onclick="showPage('dashboard')" title="Dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -1583,6 +1584,7 @@
   </div>
 </div>
 
+<script src="/icons/himmel.js" defer></script>
 <script src="/app.js"></script>
 
 </body>
