@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.1 – 2026-11-03
+
+**Als App auf dem Home-Bildschirm (iOS/Android)**
+- Manifest: Name „Command Center“, helle Farben (Standard hell), eigenes maskierbares Symbol (`icons/icon-maskable-512.png`, Inhalt in der sicheren Zone) für Android.
+- Anmeldeseite mit Manifest und iOS-Tags (Vollbild, Titel, Statusleiste) – auch von dort aus hinzufügbar.
+- Vollbild-Modus: Streifen in Logo-Nachtfarbe hinter der iOS-Statusleiste, Seitenleiste/Inhalt/Dialoge rücken unter Uhr und Notch hervor. Markieren bleibt erlaubt (Terminal).
+
 ## 2.1.0 – 2026-11-03
 
 **Design wie die slxt-Seiten** (dash.slxt.dev, shop.slxt.org, Nexus, slxt.org; Apple HIG)

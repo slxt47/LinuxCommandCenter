@@ -2033,3 +2033,14 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   .page.active { animation: none; }
   .nav-item, .btn { transition: none; }
 }
+
+/* ═══ Als App vom Home-Bildschirm (standalone, seit 03.11.2026) ════════════════
+   iOS zeigt die Statusleiste mit weißer Schrift über der Seite (black-translucent): schmaler Streifen in der
+   Logo-Nachtfarbe dahinter, Seitenleiste und Inhalt rücken unter Uhr/Notch hervor. Markieren bleibt erlaubt (Terminal). */
+@media (display-mode: standalone) {
+  body::before { display: block !important; content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
+    z-index: 1000; background: linear-gradient(90deg, #16244f, #04050d); pointer-events: none; }
+  .sidebar { padding-top: calc(12px + env(safe-area-inset-top)) !important; }
+  .main-content { padding-top: calc(14px + env(safe-area-inset-top)) !important; }
+  [style*="z-index:500"] { padding-top: env(safe-area-inset-top); }
+}

@@ -591,6 +591,11 @@ _LOGIN_HTML = """\
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Command Center">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#f4f1fb">
 <meta name="color-scheme" content="light">
 <script src="/icons/modus.js"></script>
@@ -656,6 +661,7 @@ body{
 .btn:active{transform:scale(.97)}
 .btn:focus-visible,.input:focus-visible{outline:3px solid var(--akzent);outline-offset:2px}
 .modus{position:fixed;top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right));z-index:2;width:44px;height:44px;border-radius:999px;border:0;display:grid;place-items:center;cursor:pointer;color:var(--text);background:var(--karte);box-shadow:var(--schatten);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+@media (display-mode:standalone){body::after{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);z-index:3;background:linear-gradient(90deg,#16244f,#04050d)}.modus{top:calc(16px + env(safe-area-inset-top))}}
 .note{margin-top:20px;text-align:center;font-size:13px;color:var(--text-2)}
 </style>
 </head>
