@@ -1,4 +1,4 @@
-// Hell/Dunkel für die slxt-Seiten. Standard: hell. Die Wahl bleibt im Browser (localStorage „modus“).
+// Hell/Dunkel für die slxt-Seiten. Standard: dunkel (seit 03.11.2026 abends). Die Wahl bleibt im Browser (localStorage „modus“).
 // Muss im <head> NACH <meta name="theme-color"> und VOR dem Stylesheet-Rendern laden (ohne defer/async),
 // damit nichts im falschen Modus aufblitzt. Externe Datei statt Inline-Skript wegen CSP (script-src 'self').
 // Schalter: jedes Element mit data-modus-schalter (Klick wechselt; ist es leer, setzt das Skript Symbol + Text).
@@ -9,8 +9,8 @@
   const FARBE = { hell: '#f4f1fb', dunkel: '#0b0e2a' };
   const SONNE = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>';
   const MOND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>';
-  let modus = 'hell';
-  try { if (localStorage.getItem('modus') === 'dunkel') modus = 'dunkel'; } catch (e) { /* privat/gesperrt: hell */ }
+  let modus = 'dunkel';
+  try { if (localStorage.getItem('modus') === 'hell') modus = 'hell'; } catch (e) { /* privat/gesperrt: dunkel */ }
 
   function schalterAktualisieren() {
     document.querySelectorAll('[data-modus-schalter]').forEach((b) => {
