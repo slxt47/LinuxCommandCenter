@@ -591,9 +591,9 @@ _LOGIN_HTML = """\
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
-<meta name="color-scheme" content="light dark">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1fb">
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0e2a">
+<meta name="theme-color" content="#f4f1fb">
+<meta name="color-scheme" content="light">
+<script src="/icons/modus.js"></script>
 <style>
 /* slxt-Design wie das Dashboard (static/app.css): Systemschrift, hell/dunkel, Himmel, Karte mit großem Radius */
 :root{
@@ -606,9 +606,9 @@ _LOGIN_HTML = """\
   --sterne:0;--meteor:124,92,255;
   --schrift:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   --anzeige:ui-rounded,-apple-system,BlinkMacSystemFont,"SF Pro Rounded","SF Pro Display","Segoe UI",Roboto,sans-serif;
-  color-scheme:light dark;
+  color-scheme: light;
 }
-@media (prefers-color-scheme:dark){:root{
+:root[data-modus="dunkel"] { color-scheme: dark;
   --himmel-1:#04050d;--himmel-2:#0b0e2a;--himmel-3:#1a1240;--grund:#0b0e2a;
   --karte:rgba(22,22,42,.74);--feld:rgba(255,255,255,.07);--linie:rgba(255,255,255,.12);
   --text:#f2f2f7;--text-2:#aeb0c8;--akzent:#a993ff;--auf-akzent:#0b0b10;
@@ -616,7 +616,7 @@ _LOGIN_HTML = """\
   --verlauf:linear-gradient(100deg,#b9a6ff,#7cb4ff);
   --schatten:0 0 0 1px rgba(255,255,255,.08),0 24px 60px rgba(0,0,0,.55);
   --sterne:1;--meteor:190,215,255;
-}}
+}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{
   font-family:var(--schrift);color:var(--text);-webkit-font-smoothing:antialiased;
@@ -655,10 +655,12 @@ body{
 .btn:hover{filter:brightness(1.08)}
 .btn:active{transform:scale(.97)}
 .btn:focus-visible,.input:focus-visible{outline:3px solid var(--akzent);outline-offset:2px}
+.modus{position:fixed;top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right));z-index:2;width:44px;height:44px;border-radius:999px;border:0;display:grid;place-items:center;cursor:pointer;color:var(--text);background:var(--karte);box-shadow:var(--schatten);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
 .note{margin-top:20px;text-align:center;font-size:13px;color:var(--text-2)}
 </style>
 </head>
 <body>
+<button class="modus" type="button" data-modus-schalter></button>
 <div class="box">
   <div class="logo">
     <img class="logo-icon" src="/favicon.svg" alt="">

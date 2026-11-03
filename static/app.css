@@ -57,10 +57,9 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-anzeige: ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
-  color-scheme: light dark;
+  color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-modus="dunkel"] { color-scheme: dark;
     --bg-void:      #0b0e2a;
     --bg-deep:      rgba(8, 9, 24, .72);
     --bg-surface:   #14142a;
@@ -97,7 +96,6 @@
     --schatten-hoch: 0 0 0 1px rgba(255, 255, 255, .09), 0 24px 60px rgba(0, 0, 0, .55);
     --sterne: 1; --meteor: 190, 215, 255;
   }
-}
 @media (prefers-contrast: more) { :root { --text-muted: var(--text-secondary); --border-dim: var(--border-mid); --bg-card: var(--bg-solid); } }
 @media (prefers-reduced-transparency: reduce) { :root { --bg-card: var(--bg-solid); --bg-deep: var(--bg-void); } }
 
