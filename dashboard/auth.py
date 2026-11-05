@@ -598,7 +598,7 @@ _LOGIN_HTML = """\
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#f4f1fb">
 <meta name="color-scheme" content="light">
-<script src="/icons/modus.js?v=2"></script>
+<script src="/icons/modus.js?v=3"></script>
 <style>
 /* slxt-Design wie das Dashboard (static/app.css): Systemschrift, hell/dunkel, Himmel, Karte mit großem Radius */
 :root{

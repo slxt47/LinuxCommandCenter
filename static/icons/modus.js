@@ -3,6 +3,7 @@
 // damit nichts im falschen Modus aufblitzt. Externe Datei statt Inline-Skript wegen CSP (script-src 'self').
 // Schalter: jedes Element mit data-modus-schalter (Klick wechselt; ist es leer, setzt das Skript Symbol + Text).
 // Andere Skripte: window.slxtModus.get() → 'hell' | 'dunkel'; Ereignis 'modus' auf window bei jedem Wechsel.
+// Seit 05.11.2026: Schalter blendet die Seite in 1,2 s über (slxtModus.sanft()).
 (() => {
   'use strict';
   const d = document.documentElement;
@@ -38,9 +39,27 @@
   };
   anwenden();
   document.addEventListener('DOMContentLoaded', schalterAktualisieren);
+  // Wechsel per Schalter: die ganze Seite blendet langsam (1,2 s) in den anderen Modus über (View Transitions,
+  // Crossfade aus zwei Momentaufnahmen auf der GPU). Währenddessen sind Dauer-Animationen und Übergänge angehalten
+  // (Klasse „modus-wechsel“ am <html>), damit nichts ruckelt. Ohne Unterstützung / „Bewegung reduzieren“: sofort.
+  const ruhig = matchMedia('(prefers-reduced-motion: reduce)');
+  if (document.startViewTransition) {
+    const css = '::view-transition-group(root){animation-duration:1.2s}' +
+      '::view-transition-old(root),::view-transition-new(root){animation-duration:1.2s;animation-timing-function:cubic-bezier(.4,0,.2,1)}' +
+      '.modus-wechsel *,.modus-wechsel *::before,.modus-wechsel *::after{transition:none!important;animation-play-state:paused!important}';
+    try { const s = new CSSStyleSheet(); s.replaceSync(css); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; }
+    catch (e) { const st = document.createElement('style'); st.textContent = css; document.head.append(st); }
+  }
+  function sanftWechseln() {
+    if (!document.startViewTransition || ruhig.matches) { window.slxtModus.wechseln(); return; }
+    d.classList.add('modus-wechsel');
+    const vt = document.startViewTransition(() => window.slxtModus.wechseln());
+    vt.finished.finally(() => requestAnimationFrame(() => d.classList.remove('modus-wechsel')));
+  }
+  window.slxtModus.sanft = sanftWechseln;
   document.addEventListener('click', (e) => {
     const b = e.target.closest && e.target.closest('[data-modus-schalter]');
-    if (b) { e.preventDefault(); window.slxtModus.wechseln(); }
+    if (b) { e.preventDefault(); sanftWechseln(); }
   });
   // Andere Tabs derselben Seite ziehen mit
   addEventListener('storage', (e) => { if (e.key === 'modus') { modus = e.newValue === 'dunkel' ? 'dunkel' : 'hell'; anwenden(); dispatchEvent(new CustomEvent('modus', { detail: modus })); } });
