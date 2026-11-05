@@ -4,6 +4,7 @@
 // Schalter: jedes Element mit data-modus-schalter (Klick wechselt; ist es leer, setzt das Skript Symbol + Text).
 // Andere Skripte: window.slxtModus.get() → 'hell' | 'dunkel'; Ereignis 'modus' auf window bei jedem Wechsel.
 // Seit 05.11.2026: Schalter blendet die Seite in 1,2 s über (slxtModus.sanft()).
+// QUELLE: ~/bin/modus/quelle.js – nicht hier ändern, sondern dort und dann ~/bin/modus/verteilen.py ausführen.
 (() => {
   'use strict';
   const d = document.documentElement;
@@ -15,7 +16,7 @@
 
   function schalterAktualisieren() {
     document.querySelectorAll('[data-modus-schalter]').forEach((b) => {
-      const ziel = modus === 'dunkel' ? 'Hellen Modus einschalten' : 'Dunklen Modus einschalten';
+      const en = /^en/i.test(d.lang); const ziel = modus === 'dunkel' ? (en ? 'Switch to light mode' : 'Hellen Modus einschalten') : (en ? 'Switch to dark mode' : 'Dunklen Modus einschalten');
       b.setAttribute('aria-label', ziel);
       b.setAttribute('title', ziel);
       if (b.dataset.modusSchalter !== 'eigen') b.innerHTML = modus === 'dunkel' ? SONNE : MOND;
@@ -50,11 +51,18 @@
     try { const s = new CSSStyleSheet(); s.replaceSync(css); document.adoptedStyleSheets = [...document.adoptedStyleSheets, s]; }
     catch (e) { const st = document.createElement('style'); st.textContent = css; document.head.append(st); }
   }
+  // Doppelklick: die zweite Transition bricht die erste ab – die Pause-Klasse erst entfernen, wenn die LETZTE fertig ist
+  let laufend = null;
   function sanftWechseln() {
     if (!document.startViewTransition || ruhig.matches) { window.slxtModus.wechseln(); return; }
     d.classList.add('modus-wechsel');
     const vt = document.startViewTransition(() => window.slxtModus.wechseln());
-    vt.finished.finally(() => requestAnimationFrame(() => d.classList.remove('modus-wechsel')));
+    laufend = vt;
+    vt.finished.catch(() => {}).finally(() => {
+      if (laufend !== vt) return;
+      laufend = null;
+      requestAnimationFrame(() => { if (!laufend) d.classList.remove('modus-wechsel'); });
+    });
   }
   window.slxtModus.sanft = sanftWechseln;
   document.addEventListener('click', (e) => {
