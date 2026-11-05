@@ -39,6 +39,7 @@ services:
       - /var/lib/linux-dashboard:/data
     environment:
       - PYTHONUNBUFFERED=1
+      - DASH_HOST=127.0.0.1   # nur localhost; cloudflared verbindet lokal (Audit 05.11.)
     # Server-spezifische Einstellungen (erlaubte Netze, Superadmins, Port …).
     # Legt install.sh an; Beschreibung aller Schlüssel siehe Datei bzw. README.
     env_file:
