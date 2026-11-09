@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.2 – 2026-11-09
+
+Übernimmt die Änderungen aus 2.0.1 (unten) in das neue Design: Entsperren mehrerer IPs, Browser-Sessions nur auf `127.0.0.1`, ARM64. Favicon und Login-Seite kommen aus 2.1.x.
+
 ## 2.1.1 – 2026-11-03
 
 **Als App auf dem Home-Bildschirm (iOS/Android)**
@@ -16,6 +20,32 @@
 - Terminal bleibt in beiden Modi dunkel (ANSI-Farben).
 - Neues Logo (Terminal-Prompt im Nachtquadrat mit Komet und Farbpunkt), App-Icons und Favicon neu; neue Anmeldeseite.
 - Nur Darstellung: alle Variablennamen in `app.css` bleiben, neue Werte stehen oben in `:root`, Feinschliff am Ende der Datei.
+
+## 2.0.1 – 2026-10-28
+
+**Entsperren leichter**
+- Eingabefeld „IP(s) entsperren“ im Reiter Sicherheit: eine oder mehrere IPs einfügen, auch solche,
+  die nur noch auf der Cloudflare-Liste stehen.
+- Mehrfachauswahl in der Sperrenliste mit „Ausgewählte entsperren“ und „Alle angezeigten entsperren“
+  (zusammen mit den Anwendungs-Filtern, z. B. alle Nextcloud-Sperren).
+- „Meine IP entsperren“ direkt im Hinweis, wenn die eigene IP gesperrt ist.
+- Neuer Endpunkt `POST /api/security/unban-many` (nur Superadmins, höchstens 50 IPs, zählt als eine Aktion).
+
+**Favicon**
+- `favicon.svg`/`favicon.ico` im Stil des App-Icons, auch auf der Login-Seite. Favicon, App-Icons und
+  Manifest sind ohne Anmeldung abrufbar (ohne `..`/`%` im Pfad).
+
+**Sicherheit**
+- Browser-Sessions (KasmVNC) lauschen nur noch auf `127.0.0.1`. Vorher fehlte
+  `HostIp`, Docker band den Port an `0.0.0.0` – eine Session war dann ohne
+  Dashboard-Login aus dem Netz erreichbar.
+
+**ARM64**
+- Das Image lädt das KasmVNC-Paket passend zur Architektur (`dpkg --print-architecture`)
+  statt fest `amd64` – läuft jetzt auch auf ARM-Servern (z. B. Hetzner CAX).
+
+**Doku**
+- Installationsbefehl im README zeigt auf dieses Repo.
 
 ## 2.0.0 – 2026-10-12
 
