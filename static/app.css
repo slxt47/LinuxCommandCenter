@@ -4,54 +4,100 @@
    ═══════════════════════════════════════════════════ */
 
 :root {
-  /* Core palette */
-  --bg-void:      #06080d;
-  --bg-deep:      #0b0f18;
-  --bg-surface:   #111827;
-  --bg-card:      #151d2e;
-  --bg-elevated:  #1a2438;
-  --bg-input:     #0d1320;
-  
-  /* Borders & Lines */
-  --border-dim:   #1e293b;
-  --border-mid:   #2a3a52;
-  --border-glow:  #334766;
-  
-  /* Text */
-  --text-primary:   #e2e8f0;
-  --text-secondary: #8b9dc3;
-  --text-muted:     #4a5e80;
-  --text-ghost:     #2a3a52;
-  
-  /* Accent: Emerald Neon */
-  --accent:       #3d9bff;
-  --accent-dim:   #2b84ea;
-  --accent-glow:  rgba(61, 155, 255, 0.15);
-  --accent-ghost: rgba(61, 155, 255, 0.06);
-  
-  /* Semantic */
-  --cyan:    #00d4ff;
-  --blue:    #3b82f6;
-  --amber:   #f59e0b;
-  --red:     #ef4444;
-  --purple:  #a855f7;
-  --orange:  #f97316;
-  
-  --cyan-glow:   rgba(0, 212, 255, 0.12);
-  --red-glow:    rgba(239, 68, 68, 0.12);
-  --amber-glow:  rgba(245, 158, 11, 0.12);
-  --purple-glow: rgba(168, 85, 247, 0.12);
-  
-  /* Radii & Spacing */
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
-  
-  /* Fonts */
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-  --font-sans: 'Space Grotesk', system-ui, sans-serif;
+  /* slxt-Design (wie dash.slxt.dev, shop.slxt.org, Nexus, slxt.org): alte Namen bleiben, Werte sind neu.
+     Hell/dunkel folgt dem System. */
+  --bg-void:      #f4f1fb;
+  --bg-deep:      rgba(244, 241, 251, .74);
+  --bg-surface:   #ffffff;
+  --bg-card:      rgba(255, 255, 255, .8);
+  --bg-elevated:  #ffffff;
+  --bg-input:     rgba(30, 20, 60, .05);
+  --bg-solid:     #ffffff;
+
+  --border-dim:   rgba(30, 20, 60, .09);
+  --border-mid:   rgba(30, 20, 60, .16);
+  --border-glow:  rgba(91, 61, 245, .45);
+
+  --text-primary:   #1d1d1f;
+  --text-secondary: #54546a;
+  --text-muted:     #6e6e86;
+  --text-ghost:     rgba(30, 20, 60, .22);
+
+  --accent:       #5b3df5;
+  --accent-dim:   #4a2ee0;
+  --accent-glow:  rgba(91, 61, 245, .2);
+  --accent-ghost: rgba(91, 61, 245, .09);
+  --on-accent:    #ffffff;
+  --verlauf:      linear-gradient(100deg, #6d4aff, #3b82f6);
+
+  --cyan:    #0071a4;
+  --blue:    #1f6fd1;
+  --amber:   #9a6200;
+  --red:     #c8102e;
+  --purple:  #8e3fd1;
+  --orange:  #b25000;
+  --green:   #177a32;
+
+  --cyan-glow:   rgba(0, 113, 164, .1);
+  --red-glow:    rgba(200, 16, 46, .09);
+  --amber-glow:  rgba(154, 98, 0, .1);
+  --purple-glow: rgba(142, 63, 209, .1);
+
+  --himmel-1: #dfe5ff; --himmel-2: #efe3f8; --himmel-3: #fde7da;
+  --schatten: 0 1px 2px rgba(40, 20, 90, .05), 0 10px 30px rgba(60, 40, 120, .1);
+  --schatten-hoch: 0 2px 6px rgba(40, 20, 90, .08), 0 22px 50px rgba(60, 40, 120, .2);
+  --sterne: 0; --meteor: 124, 92, 255;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 22px;
+  --radius-xl: 24px;
+
+  /* Systemschrift statt Web-Fonts (keine Anfragen an Google) */
+  --font-mono: ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-anzeige: ui-rounded, -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
 }
+:root[data-modus="dunkel"] { color-scheme: dark;
+    --bg-void:      #0b0e2a;
+    --bg-deep:      rgba(8, 9, 24, .72);
+    --bg-surface:   #14142a;
+    --bg-card:      rgba(22, 22, 42, .74);
+    --bg-elevated:  #1e1e38;
+    --bg-input:     rgba(255, 255, 255, .06);
+    --bg-solid:     #17172a;
+    --border-dim:   rgba(255, 255, 255, .08);
+    --border-mid:   rgba(255, 255, 255, .14);
+    --border-glow:  rgba(169, 147, 255, .5);
+    --text-primary:   #f2f2f7;
+    --text-secondary: #aeb0c8;
+    --text-muted:     #8b8da8;
+    --text-ghost:     rgba(255, 255, 255, .2);
+    --accent:       #a993ff;
+    --accent-dim:   #9580ff;
+    --accent-glow:  rgba(169, 147, 255, .22);
+    --accent-ghost: rgba(169, 147, 255, .12);
+    --on-accent:    #0b0b10;
+    --verlauf:      linear-gradient(100deg, #b9a6ff, #7cb4ff);
+    --cyan:    #64d2ff;
+    --blue:    #7cb4ff;
+    --amber:   #ffd60a;
+    --red:     #ff6b62;
+    --purple:  #d08cff;
+    --orange:  #ff9f0a;
+    --green:   #3ddc6f;
+    --cyan-glow:   rgba(100, 210, 255, .13);
+    --red-glow:    rgba(255, 107, 98, .14);
+    --amber-glow:  rgba(255, 214, 10, .13);
+    --purple-glow: rgba(208, 140, 255, .14);
+    --himmel-1: #04050d; --himmel-2: #0b0e2a; --himmel-3: #1a1240;
+    --schatten: 0 0 0 1px rgba(255, 255, 255, .05), 0 12px 34px rgba(0, 0, 0, .35);
+    --schatten-hoch: 0 0 0 1px rgba(255, 255, 255, .09), 0 24px 60px rgba(0, 0, 0, .55);
+    --sterne: 1; --meteor: 190, 215, 255;
+  }
+@media (prefers-contrast: more) { :root { --text-muted: var(--text-secondary); --border-dim: var(--border-mid); --bg-card: var(--bg-solid); } }
+@media (prefers-reduced-transparency: reduce) { :root { --bg-card: var(--bg-solid); --bg-deep: var(--bg-void); } }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1851,3 +1897,150 @@ body::before {
 .sec-sel input { width: 16px; height: 16px; accent-color: var(--accent, #3d9bff); cursor: pointer; }
 .sec-row-sel td { background: rgba(61,155,255,.08); }
 .sec-myip .btn { margin-left: 6px; }
+
+
+/* ═══ slxt-Design (03.11.2026) ═══════════════════════════════════════════════
+   Wie dash.slxt.dev / shop.slxt.org / Nexus: Himmel als Hintergrund (Sterne nur dunkel, himmel.js),
+   Glas nur für die Seitenleiste, Karten mit großem Radius und weichem Schatten, Pillen-Knöpfe,
+   Systemschrift. Steht am Ende, damit es die alten Regeln überschreibt; Layout bleibt unverändert. */
+html { font-size: 14px; -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background: linear-gradient(180deg, var(--himmel-1), var(--himmel-2) 55%, var(--himmel-3)) fixed var(--bg-void);
+}
+body::before { display: none; }
+.himmel { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+.himmel canvas { position: absolute; inset: 0; width: 100%; height: 100%; opacity: var(--sterne); }
+.himmel .sternschnuppen { position: absolute; inset: 0; overflow: hidden; }
+.himmel .meteor { position: absolute; top: 0; left: 0; height: 2px; border-radius: 2px; transform-origin: 100% 50%;
+  background: linear-gradient(90deg, rgba(var(--meteor), 0), rgba(var(--meteor), .4) 60%, rgba(255, 255, 255, .95)); }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 6px; }
+
+/* Seitenleiste: Glas */
+.sidebar {
+  background: var(--bg-deep);
+  border-right: 1px solid var(--border-dim);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+.sidebar-logo { background: none; box-shadow: none; padding: 0; overflow: hidden; border-radius: 11px; }
+.sidebar-logo img { width: 42px; height: 42px; display: block; }
+.nav-item { border-radius: 12px; color: var(--text-secondary); transition: background .15s, color .15s, transform .15s; }
+.nav-item:hover { color: var(--text-primary); background: var(--accent-ghost); }
+.nav-item:active { transform: scale(.94); }
+.nav-item.active { color: var(--on-accent); background: var(--accent); box-shadow: 0 4px 14px var(--accent-glow); }
+.nav-item.active::before { display: none; }
+.nav-tooltip { background: var(--bg-solid); border: 0; box-shadow: var(--schatten-hoch); border-radius: 10px; font-weight: 600; color: var(--text-primary); }
+
+/* Kopfzeile jeder Seite */
+.header-bar { border-bottom: 0; padding-bottom: 4px; }
+.header-title { font-family: var(--font-anzeige); font-size: clamp(24px, 3vw, 32px); font-weight: 800; letter-spacing: -.03em; color: var(--text-primary); }
+.header-title span { background: var(--verlauf); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.header-meta { font-family: var(--font-sans); }
+.status-dot { background: var(--green); }
+.header-search, .dk-search, .conn-input, .sec-select, .sec-sel, .terminal-input,
+input[type=text], input[type=password], input[type=number], input[type=email], input[type=search], input[type=url], select, textarea {
+  border-radius: 10px;
+  border: 1px solid var(--border-dim);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+.header-search:focus, input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-ghost);
+}
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+
+/* Karten */
+.card, .vm-card, .dk-card, .conn-card, .browser-card, .pool-card, .net-card, .ids-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--schatten);
+}
+.card:hover { border-color: var(--border-mid); }
+.card-accent { display: none; }
+.card-title { text-transform: none; letter-spacing: 0; font-weight: 700; font-size: 14px; color: var(--text-primary); font-family: var(--font-sans); }
+.card-title svg { color: var(--accent); }
+.card-badge, .owner-badge, .browser-badge, .conn-badge, .sec-tag, .sec-chip, .ntf-chip, .vm-state, .snap-state {
+  border-radius: 999px;
+}
+.badge-green { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+
+/* Knöpfe: Pillen wie auf den anderen Seiten */
+.btn {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--accent-ghost);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 7px 14px;
+  min-height: 32px;
+  transition: background .15s, transform .15s, filter .15s, color .15s;
+}
+.btn:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text-primary); border-color: transparent; }
+.btn:active { transform: scale(.96); }
+.btn-primary, .btn-primary:hover { background: var(--accent); color: var(--on-accent); border-color: transparent; box-shadow: none; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-danger { background: var(--red-glow); color: var(--red); border-color: transparent; }
+.btn-danger:hover { background: color-mix(in srgb, var(--red) 20%, transparent); color: var(--red); border-color: transparent; }
+.btn-success { border-color: transparent; }
+.btn-sm { min-height: 28px; padding: 4px 11px; font-size: 11.5px; }
+.btn-console-vnc, .btn-console-spice { border-color: transparent; }
+.vm-mgmt-tab, .dk-filter, .set-tab, .ids-range-btn, .proto-btn { font-family: var(--font-sans); border-radius: 999px; }
+.vm-mgmt-tab.active, .set-tab.active, .ids-range-btn.active { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+
+/* Tabellen und Zeilen */
+.process-table th, .sec-table th { color: var(--text-secondary); font-family: var(--font-sans); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.process-table td, .sec-table td { border-color: var(--border-dim); }
+.progress-track { background: var(--bg-input); border-radius: 999px; }
+.progress-fill { border-radius: 999px; }
+.core-bar-track { border-radius: 8px; }
+.core-bar-fill { border-radius: 0; }
+/* Wert steht auf der Füllung: Text mit hellem Schein, damit er auf Gelb, Rot und Violett lesbar bleibt */
+.core-bar-value { color: var(--text-primary); text-shadow: 0 0 3px var(--bg-solid), 0 0 6px var(--bg-solid); }
+/* Kennzahlen wie auf den Apple-Seiten: gerundete Anzeige-Schrift mit gleich breiten Ziffern */
+.metric-big { font-family: var(--font-anzeige); font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+
+/* Dialoge (inline gebaut): feste Fläche, großer Radius */
+[style*="z-index:500"] { background: rgba(5, 5, 20, .45) !important; }
+[style*="z-index:500"] > div { background: var(--bg-solid) !important; border: 0 !important; box-shadow: var(--schatten-hoch); border-radius: 24px !important; }
+
+/* Hinweise unten */
+.toast { border-radius: 14px; background: var(--bg-solid); box-shadow: var(--schatten-hoch); border-color: var(--border-dim); font-family: var(--font-sans); }
+.empty-state, .loading-overlay { font-family: var(--font-sans); }
+.spinner { border-top-color: var(--accent); }
+
+/* Terminal bleibt dunkel – auch im hellen Modus */
+.terminal-container {
+  /* eigene, immer dunkle Werte: ANSI-Farben der Ausgabe sind für dunklen Grund gemacht */
+  --bg-input: #0d0d1c; --bg-card: #15152a; --bg-elevated: #1e1e38;
+  --border-dim: rgba(255, 255, 255, .08); --border-mid: rgba(255, 255, 255, .14);
+  --text-primary: #f2f2f7; --text-secondary: #c9cbe0; --text-muted: #8b8da8; --text-ghost: rgba(255, 255, 255, .25);
+  --accent: #a993ff; --accent-ghost: rgba(169, 147, 255, .14); --red: #ff6b62;
+  color-scheme: dark;
+  border-radius: var(--radius-lg); box-shadow: var(--schatten); border-color: var(--border-dim);
+}
+
+.page.active { animation: seiteEin .28s cubic-bezier(.2, .8, .2, 1); }
+@keyframes seiteEin { from { transform: translateY(6px); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .page.active { animation: none; }
+  .nav-item, .btn { transition: none; }
+}
+
+/* ═══ Als App vom Home-Bildschirm (standalone, seit 03.11.2026) ════════════════
+   iOS zeigt die Statusleiste mit weißer Schrift über der Seite (black-translucent): schmaler Streifen in der
+   Logo-Nachtfarbe dahinter, Seitenleiste und Inhalt rücken unter Uhr/Notch hervor. Markieren bleibt erlaubt (Terminal). */
+@media (display-mode: standalone) {
+  body::before { display: block !important; content: ""; position: fixed; top: 0; left: 0; right: 0; height: env(safe-area-inset-top);
+    z-index: 1000; background: linear-gradient(90deg, #16244f, #04050d); pointer-events: none; }
+  .sidebar { padding-top: calc(12px + env(safe-area-inset-top)) !important; }
+  .main-content { padding-top: calc(14px + env(safe-area-inset-top)) !important; }
+  [style*="z-index:500"] { padding-top: env(safe-area-inset-top); }
+}

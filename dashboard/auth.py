@@ -591,86 +591,88 @@ _LOGIN_HTML = """\
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="/icons/icon-180.png">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Command Center">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#f4f1fb">
+<meta name="color-scheme" content="light">
+<script src="/icons/modus.js?v=4"></script>
 <style>
+/* slxt-Design wie das Dashboard (static/app.css): Systemschrift, hell/dunkel, Himmel, Karte mit großem Radius */
 :root{
-  --bg-void:#06080d;--bg-card:#151d2e;--bg-input:#0d1320;
-  --border-mid:#2a3a52;--border-glow:#334766;
-  --text-primary:#e2e8f0;--text-secondary:#8b9dc3;--text-muted:#4a5e80;
-  --accent:#3d9bff;--accent-dim:#2b84ea;--accent-glow:rgba(61,155,255,.15);
-  --red:#ef4444;--red-glow:rgba(239,68,68,.12);
-  --font-mono:'JetBrains Mono',monospace;
-  --font-sans:'Space Grotesk',system-ui,sans-serif;
+  --himmel-1:#dfe5ff;--himmel-2:#efe3f8;--himmel-3:#fde7da;--grund:#f4f1fb;
+  --karte:rgba(255,255,255,.82);--feld:rgba(30,20,60,.05);--linie:rgba(30,20,60,.12);
+  --text:#1d1d1f;--text-2:#54546a;--akzent:#5b3df5;--auf-akzent:#fff;
+  --rot:#c8102e;--rot-flaeche:rgba(200,16,46,.09);
+  --verlauf:linear-gradient(100deg,#6d4aff,#3b82f6);
+  --schatten:0 2px 6px rgba(40,20,90,.08),0 22px 50px rgba(60,40,120,.2);
+  --sterne:0;--meteor:124,92,255;
+  --schrift:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --anzeige:ui-rounded,-apple-system,BlinkMacSystemFont,"SF Pro Rounded","SF Pro Display","Segoe UI",Roboto,sans-serif;
+  color-scheme: light;
+}
+:root[data-modus="dunkel"] { color-scheme: dark;
+  --himmel-1:#04050d;--himmel-2:#0b0e2a;--himmel-3:#1a1240;--grund:#0b0e2a;
+  --karte:rgba(22,22,42,.74);--feld:rgba(255,255,255,.07);--linie:rgba(255,255,255,.12);
+  --text:#f2f2f7;--text-2:#aeb0c8;--akzent:#a993ff;--auf-akzent:#0b0b10;
+  --rot:#ff6b62;--rot-flaeche:rgba(255,107,98,.14);
+  --verlauf:linear-gradient(100deg,#b9a6ff,#7cb4ff);
+  --schatten:0 0 0 1px rgba(255,255,255,.08),0 24px 60px rgba(0,0,0,.55);
+  --sterne:1;--meteor:190,215,255;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 body{
-  font-family:var(--font-sans);background:var(--bg-void);color:var(--text-primary);
-  min-height:100vh;display:flex;align-items:center;justify-content:center;
+  font-family:var(--schrift);color:var(--text);-webkit-font-smoothing:antialiased;
+  background:linear-gradient(180deg,var(--himmel-1),var(--himmel-2) 55%,var(--himmel-3)) fixed var(--grund);
+  min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:16px;
 }
-body::before{
-  content:'';position:fixed;inset:0;pointer-events:none;
-  background-image:linear-gradient(rgba(61,155,255,.03) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(61,155,255,.03) 1px,transparent 1px);
-  background-size:60px 60px;
-}
+.himmel{position:fixed;inset:0;pointer-events:none}
+.himmel canvas{position:absolute;inset:0;width:100%;height:100%;opacity:var(--sterne)}
+.himmel .sternschnuppen{position:absolute;inset:0;overflow:hidden}
+.himmel .meteor{position:absolute;top:0;left:0;height:2px;border-radius:2px;transform-origin:100% 50%;
+  background:linear-gradient(90deg,rgba(var(--meteor),0),rgba(var(--meteor),.4) 60%,rgba(255,255,255,.95))}
 .box{
-  position:relative;z-index:1;background:var(--bg-card);
-  border:1px solid var(--border-mid);border-radius:20px;
-  padding:48px 40px 40px;width:100%;max-width:420px;
+  position:relative;z-index:1;background:var(--karte);border-radius:28px;box-shadow:var(--schatten);
+  -webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);
+  padding:40px 36px 32px;width:100%;max-width:400px;
 }
-.box::before{
-  content:'';position:absolute;top:0;left:40px;right:40px;height:1px;
-  background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:.5;
-}
-.logo{display:flex;align-items:center;gap:16px;margin-bottom:36px}
-.logo-icon{
-  width:48px;height:48px;border-radius:12px;flex-shrink:0;
-  background:linear-gradient(135deg,var(--accent),#00d4ff);
-  display:flex;align-items:center;justify-content:center;
-  font-family:var(--font-mono);font-weight:700;font-size:20px;color:#06080d;
-  box-shadow:0 0 24px var(--accent-glow);
-}
-.logo-title{font-size:18px;font-weight:600;letter-spacing:-.3px}
-.logo-sub{font-size:11px;color:var(--text-muted);font-family:var(--font-mono);margin-top:2px}
-.error{
-  background:var(--red-glow);border:1px solid rgba(239,68,68,.3);
-  border-radius:8px;padding:10px 16px;color:var(--red);
-  font-size:13px;font-family:var(--font-mono);margin-bottom:20px;
-}
-.field{margin-bottom:20px}
-.label{
-  display:block;font-size:11px;font-weight:500;color:var(--text-secondary);
-  text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;
-  font-family:var(--font-mono);
-}
+@media (prefers-reduced-transparency:reduce){.box{-webkit-backdrop-filter:none;backdrop-filter:none;background:var(--grund)}}
+.logo{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;margin-bottom:28px}
+.logo-icon{width:72px;height:72px;border-radius:17px;display:block;box-shadow:0 10px 30px rgba(20,10,60,.35)}
+.logo-title{font-family:var(--anzeige);font-size:28px;font-weight:800;letter-spacing:-.03em}
+.logo-title span{background:var(--verlauf);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.logo-sub{font-size:15px;color:var(--text-2);margin-top:2px}
+.error{background:var(--rot-flaeche);border-radius:12px;padding:10px 14px;color:var(--rot);font-size:14px;font-weight:600;margin-bottom:18px}
+.field{margin-bottom:16px}
+.label{display:block;font-size:14px;font-weight:600;margin-bottom:6px}
 .input{
-  width:100%;background:var(--bg-input);border:1px solid var(--border-mid);
-  border-radius:8px;padding:12px 16px;color:var(--text-primary);
-  font-family:var(--font-mono);font-size:14px;outline:none;
-  transition:border-color .15s,box-shadow .15s;
+  width:100%;min-height:44px;background:var(--feld);border:1px solid var(--linie);border-radius:12px;padding:10px 14px;
+  color:var(--text);font:inherit;font-size:17px;outline:none;transition:border-color .15s,box-shadow .15s;
 }
-.input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
-.input::placeholder{color:var(--text-muted)}
+.input:focus{border-color:var(--akzent);box-shadow:0 0 0 4px color-mix(in srgb,var(--akzent) 20%,transparent)}
+.input::placeholder{color:var(--text-2);opacity:.7}
 .btn{
-  width:100%;background:var(--accent);color:#06080d;border:none;
-  border-radius:8px;padding:13px;font-family:var(--font-sans);
-  font-size:15px;font-weight:600;cursor:pointer;
-  transition:background .15s,box-shadow .15s;margin-top:8px;
+  width:100%;min-height:48px;background:var(--akzent);color:var(--auf-akzent);border:none;border-radius:999px;
+  font:inherit;font-size:17px;font-weight:600;cursor:pointer;margin-top:8px;transition:filter .15s,transform .15s;
 }
-.btn:hover{background:var(--accent-dim);box-shadow:0 0 24px var(--accent-glow)}
-.note{
-  margin-top:24px;text-align:center;font-size:11px;
-  color:var(--text-muted);font-family:var(--font-mono);
-}
+.btn:hover{filter:brightness(1.08)}
+.btn:active{transform:scale(.97)}
+.btn:focus-visible,.input:focus-visible{outline:3px solid var(--akzent);outline-offset:2px}
+.modus{position:fixed;top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right));z-index:2;width:44px;height:44px;border-radius:999px;border:0;display:grid;place-items:center;cursor:pointer;color:var(--text);background:var(--karte);box-shadow:var(--schatten);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+@media (display-mode:standalone){body::after{content:"";position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);z-index:3;background:linear-gradient(90deg,#16244f,#04050d)}.modus{top:calc(16px + env(safe-area-inset-top))}}
+.note{margin-top:20px;text-align:center;font-size:13px;color:var(--text-2)}
 </style>
 </head>
 <body>
+<button class="modus" type="button" data-modus-schalter></button>
 <div class="box">
   <div class="logo">
-    <div class="logo-icon">CC</div>
+    <img class="logo-icon" src="/favicon.svg" alt="">
     <div>
-      <div class="logo-title">Command Center</div>
-      <div class="logo-sub">Linux Dashboard</div>
+      <div class="logo-title">Command Center<span>.</span></div>
+      <div class="logo-sub">Melde dich mit deinem Server-Konto an.</div>
     </div>
   </div>
   %ERROR%
@@ -687,8 +689,9 @@ body::before{
     </div>
     <button class="btn" type="submit">Anmelden</button>
   </form>
-  <div class="note">Authentifizierung gegen lokale System-Benutzer</div>
+  <div class="note">Anmeldung mit den Linux-Benutzern dieses Servers</div>
 </div>
+<script src="/icons/himmel.js" defer></script>
 </body>
 </html>
 """

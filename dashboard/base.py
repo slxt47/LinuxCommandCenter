@@ -26,7 +26,7 @@ from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 
 
-HOST = "0.0.0.0"
+HOST = os.environ.get("DASH_HOST", "0.0.0.0")  # Produktion: 127.0.0.1 (nur Tunnel)
 PORT = int(os.environ.get("DASH_PORT", "8420"))
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 DATA_DIR = Path("/data")

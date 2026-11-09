@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <!-- PWA / Installierbarkeit (additiv, ändert kein bestehendes Verhalten) -->
-<meta name="theme-color" content="#06080d">
+<meta name="theme-color" content="#f4f1fb">
+<meta name="color-scheme" content="light">
+<script src="/icons/modus.js?v=4"></script>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -14,7 +16,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Command Center">
 <title>Linux Command Center</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -22,7 +23,7 @@
 <div class="app-layout">
   <!-- ═══ Sidebar ═══ -->
   <nav class="sidebar">
-    <div class="sidebar-logo">CC</div>
+    <div class="sidebar-logo"><img src="/favicon.svg" alt="Command Center" width="42" height="42"></div>
     <div class="nav-items">
       <button id="nav-btn-dashboard" class="nav-item active" onclick="showPage('dashboard')" title="Dashboard">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -78,6 +79,7 @@
       </button>
     </div>
     <div style="margin-top:auto;padding-bottom:8px;">
+      <button class="nav-item modus-knopf" type="button" data-modus-schalter></button>
       <button class="nav-item" onclick="window.location.href='/logout'" title="Abmelden" style="color:var(--text-muted);">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
         <span class="nav-tooltip">Abmelden</span>
@@ -1583,6 +1585,7 @@
   </div>
 </div>
 
+<script src="/icons/himmel.js" defer></script>
 <script src="/app.js"></script>
 
 </body>
