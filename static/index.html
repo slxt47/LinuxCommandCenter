@@ -37,6 +37,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
         <span class="nav-tooltip">Konten</span>
       </button>
+      <button id="nav-btn-codes" class="nav-item" onclick="showPage('codes')" title="Codes" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="m10.8 12.2 9.2-9.2"/><path d="m17 6 3 3"/><path d="m14.5 8.5 2.5 2.5"/></svg>
+        <span class="nav-tooltip">Codes</span>
+      </button>
       <button id="nav-btn-backups" class="nav-item" onclick="showPage('backups')" title="Backups" style="display:none;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
         <span class="nav-tooltip">Backups</span>
@@ -694,6 +698,22 @@
       </div>
       <p class="eb-hinweis" id="eb-hinweis-konten" hidden></p>
       <iframe class="eb-rahmen" id="eb-rahmen-konten" title="Konten" referrerpolicy="no-referrer" allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
+    </div>
+
+    <!-- ══════════ CODES (eingebettet, siehe dashboard/einbettung.py) ══════════ -->
+    <div id="page-codes" class="page eb-seite">
+      <div class="header-bar">
+        <h1 class="header-title"><span>Zugangs</span>codes</h1>
+        <div class="header-actions">
+          <button class="btn" type="button" onclick="ladeEinbettung('codes', null, true)" title="Ansicht neu laden">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Neu laden
+          </button>
+        </div>
+      </div>
+      <p class="eb-hinweis" id="eb-hinweis-codes" hidden></p>
+      <iframe class="eb-rahmen" id="eb-rahmen-codes" title="Codes" referrerpolicy="no-referrer" allow="clipboard-write"
         sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
     </div>
 

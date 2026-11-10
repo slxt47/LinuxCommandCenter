@@ -1,6 +1,6 @@
 """Eingebettete Apps (Reiter „Konten“, „Backups“, „IT-Tools“) – seit 10.11.2026.
 
-Ehemals eigene Seiten (claude/twilio/cloudflare/hetzner/backup/tools.slxt.dev) laufen nur noch lokal
+Ehemals eigene Seiten (claude/twilio/cloudflare/hetzner/backup/tools/codes.slxt.dev) laufen nur noch lokal
 und sind ausschließlich über diesen Proxy erreichbar. Sicherheitsmodell:
 
 1. Fähigkeits-URL statt Cookie: /einbettung/<schlüssel>/<app>/<pfad>. Den Schlüssel gibt es nur für eine
@@ -40,6 +40,7 @@ APPS = {
     "hetzner":    {"port": 9301, "host": "hetzner.slxt.dev",    "token": "hetzner"},
     "backup":     {"port": 9320, "host": "backup.slxt.dev",     "token": "backup"},
     "tools":      {"port": 89,   "host": "tools.slxt.dev",      "token": None},
+    "codes":      {"port": 9305, "host": "codes.slxt.dev",      "token": "codes"},
 }
 
 PFAD_RE = re.compile(r"^/einbettung/([A-Za-z0-9_-]{43})/([a-z]+)(/[^?#]*)?$")

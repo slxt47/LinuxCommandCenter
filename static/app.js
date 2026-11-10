@@ -811,7 +811,7 @@ function getBarClass(percent) {
 
 // Rollenmodell (siehe dashboard/auth.py): superadmin (root, jokergame) = alles;
 // admin (Gruppe dashadmin) = eigene VMs + Browser + Verbindungen; user = Browser + Verbindungen.
-const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge']);
+const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge', 'codes']);
 const _ADMIN_PAGES = new Set(['vms']);
 const _ROLE_RANK = { user: 0, admin: 1, superadmin: 2 };
 function roleAtLeast(min) { return (_ROLE_RANK[window._userRole] ?? -1) >= (_ROLE_RANK[min] ?? 99); }
@@ -854,7 +854,7 @@ function showPage(page) {
     case 'notifications': loadNotifications(); break;
     case 'settings': renderSettings(); break;
     case 'startseite': loadStartseite(); break;
-    case 'konten': case 'backups': case 'werkzeuge': ladeEinbettung(page); break;
+    case 'konten': case 'backups': case 'werkzeuge': case 'codes': ladeEinbettung(page); break;
   }
 }
 
@@ -862,8 +862,8 @@ function showPage(page) {
 // Server: dashboard/einbettung.py. Jede Ansicht holt sich einen kurzlebigen Schlüssel (/api/einbettung) und lädt die App
 // in einem iframe mit sandbox OHNE allow-same-origin: die App kommt nicht an Command Center, Cookies oder Speicher.
 // Modus (hell/dunkel) geht per ?modus= und postMessage hinein (nur dieser eine Wert).
-const _EB_APPS = { konten: ['hetzner', 'cloudflare', 'twilio', 'claude'], backups: ['backup'], werkzeuge: ['tools'] };
-const _EB_NAMEN = { hetzner: 'Hetzner', cloudflare: 'Cloudflare', twilio: 'Twilio', claude: 'Claude', backup: 'Backups', tools: 'IT-Tools' };
+const _EB_APPS = { konten: ['hetzner', 'cloudflare', 'twilio', 'claude'], backups: ['backup'], werkzeuge: ['tools'], codes: ['codes'] };
+const _EB_NAMEN = { hetzner: 'Hetzner', cloudflare: 'Cloudflare', twilio: 'Twilio', claude: 'Claude', backup: 'Backups', tools: 'IT-Tools', codes: 'Codes' };
 
 function _ebGewaehlt(seite) {
   if (seite !== 'konten') return _EB_APPS[seite][0];
@@ -1477,7 +1477,7 @@ async function initUserRole() {
   // Benutzerverwaltung und Docker nur für Superadmins sichtbar (Buttons starten
   // versteckt — Docker-Zugriff über den Socket ist faktisch Root auf dem Host)
   if (isSuperadmin()) {
-    for (const p of ['users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge']) {
+    for (const p of ['users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge', 'codes']) {
       const b = document.getElementById(`nav-btn-${p}`);
       if (b) b.style.display = '';
     }
@@ -6980,7 +6980,7 @@ function renderNotifications() {
 const _TAB_LABELS = { processes: 'Prozesse', terminal: 'Terminal', updates: 'Updates', vms: 'VMs',
   docker: 'Docker', services: 'Services', connections: 'Verbindungen', browser: 'Browser',
   security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Mein Dashboard',
-  konten: 'Konten', backups: 'Backups', werkzeuge: 'IT-Tools' };
+  konten: 'Konten', backups: 'Backups', werkzeuge: 'IT-Tools', codes: 'Codes' };
 window._prefs = null;
 
 async function loadPrefs() {

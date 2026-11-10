@@ -7,7 +7,7 @@ nur noch eine Option.
 
 | | |
 |---|---|
-| Version | siehe `VERSION` (aktuell 2.3.0), Änderungen in `CHANGELOG.md` |
+| Version | siehe `VERSION` (aktuell 2.3.1), Änderungen in `CHANGELOG.md` |
 | Systeme | Debian 12, Ubuntu 22.04 / 24.04, amd64 und arm64 (Schutz-Paket: nur apt-basiert) |
 | Dashboard | Docker-Container `linux-dashboard`, Port 8420 |
 | Oberfläche | Design wie die slxt-Seiten (Apple HIG): Himmel-Verlauf, Glas-Seitenleiste, Systemschrift (keine Web-Fonts); **hell/dunkel umschaltbar**, Standard dunkel (Knopf in der Seitenleiste und auf der Anmeldeseite, `static/icons/modus.js`) |

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.1 – 2026-11-10
+
+- Neuer Reiter **„Codes“** (Zugangscodes aus den Mails, ehemals codes.slxt.dev) – gleiche Einbettung wie Konten/Backups/IT-Tools (Sandbox, Fähigkeits-URL, internes Token `codes`, Zwischenablage erlaubt). Direktlink `/#codes`.
+
 ## 2.3.0 – 2026-11-10
 
 **Neue Reiter „Konten“, „Backups“, „IT-Tools“** (nur Superadmins, ausblendbar)
