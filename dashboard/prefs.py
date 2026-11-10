@@ -18,7 +18,7 @@ from dashboard.base import DATA_DIR
 PREFS_FILE = DATA_DIR / "user_prefs.json"
 # Tabs, die ausgeblendet werden duerfen (Dashboard und Einstellungen bleiben immer)
 HIDEABLE_PAGES = ("processes", "terminal", "updates", "vms", "docker", "services",
-                  "connections", "browser", "security", "notifications", "users", "startseite")
+                  "connections", "browser", "security", "notifications", "users", "startseite", "konten", "backups", "werkzeuge")
 _MAX_KEY_LEN = 16384
 _lock = threading.Lock()
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0 – 2026-11-10
+
+**Neue Reiter „Konten“, „Backups“, „IT-Tools“** (nur Superadmins, ausblendbar)
+- „Konten“ bündelt Hetzner, Cloudflare, Twilio und Claude (Umschalter oben, letzte Wahl bleibt), „Backups“ ist die Backup-Zentrale, „IT-Tools“ die Werkzeugsammlung. Die öffentlichen Adressen (hetzner/cloudflare/twilio/claude/backup/tools.slxt.dev) werden danach abgeschaltet.
+- Direktlinks: `/#konten/hetzner`, `/#backups`, `/#werkzeuge`, `/#startseite` – auch über die Anmeldung hinweg.
+
+**Sicherheit der Einbettung** (`dashboard/einbettung.py`)
+- Fähigkeits-URL `/einbettung/<schlüssel>/<app>/`: Schlüssel nur für Superadmin-Sitzungen, an Sitzung und App gebunden, 8 h gültig, mit dem Abmelden weg; Rolle wird bei jeder Anfrage live geprüft; Schlüssel im Protokoll maskiert.
+- iframe mit `sandbox` ohne `allow-same-origin`, dazu CSP-Direktive `sandbox` vom Proxy: die Apps laufen in einem undurchsichtigen Ursprung, kein Zugriff auf Command Center, Cookies, DOM oder Speicher.
+- Zur App gehen nur ausgewählte Kopfzeilen (keine Cookies, kein Cf-*/Authorization/X-Forwarded-*). Interne Tokens (Hetzner, Cloudflare, Backup-Zentrale) liegen in `/data/einbettung/*.token` (0600) und werden nur serverseitig gesetzt.
+- POST nur aus der Sandbox (Origin `null`), höchstens 64 KB; Pfade mit `..`/`%2e`/`%2f` werden abgewiesen; Antworten ohne Set-Cookie, mit `frame-ancestors 'self'`, `no-referrer`, `nosniff`, `no-store`.
+- Modus (hell/dunkel) geht per `?modus=` und `postMessage` in die Apps (`modus.js` versteht das seit 10.11.2026).
+
 ## 2.2.0 – 2026-11-10
 
 **Neuer Reiter „Mein Dashboard“** (intern `startseite`) (nur Superadmins, in den Einstellungen ausblendbar)

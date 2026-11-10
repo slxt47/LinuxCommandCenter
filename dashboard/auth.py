@@ -598,7 +598,7 @@ _LOGIN_HTML = """\
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#f4f1fb">
 <meta name="color-scheme" content="light">
-<script src="/icons/modus.js?v=4"></script>
+<script src="/icons/modus.js?v=6"></script>
 <style>
 /* slxt-Design wie das Dashboard (static/app.css): Systemschrift, hell/dunkel, Himmel, Karte mit großem Radius */
 :root{
@@ -692,6 +692,7 @@ body{
   <div class="note">Anmeldung mit den Linux-Benutzern dieses Servers</div>
 </div>
 <script src="/icons/himmel.js" defer></script>
+<script src="/icons/ziel.js"></script>
 </body>
 </html>
 """

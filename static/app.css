@@ -2087,3 +2087,28 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   #page-startseite .header-search { flex: 1 1 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .st-kachel { transition: none; } .st-kachel:hover { transform: none; } }
+
+/* ═══ Eingebettete Apps (Konten, Backups, IT-Tools) ═══ */
+.eb-seite.active { display: flex; flex-direction: column; height: calc(100dvh - 48px); }
+.eb-seite .header-bar { flex: none; }
+.eb-rahmen {
+  flex: 1 1 auto; width: 100%; min-height: 420px; border: 1px solid var(--border-dim); border-radius: var(--radius-lg);
+  background: var(--bg-card); box-shadow: var(--schatten);
+}
+.eb-hinweis { margin: 0 0 12px; padding: 12px 14px; border-radius: var(--radius-md); background: var(--red-glow); color: var(--red); }
+.eb-segment { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--bg-input); border: 1px solid var(--border-dim); }
+.eb-segment button {
+  min-height: 36px; padding: 0 14px; border: 0; border-radius: 9px; background: transparent; cursor: pointer;
+  color: var(--text-secondary); font: 600 13px var(--font-sans); transition: background .2s, color .2s, box-shadow .2s;
+}
+.eb-segment button:hover { color: var(--text-primary); }
+.eb-segment button[aria-pressed="true"] { background: var(--bg-solid); color: var(--text-primary); box-shadow: 0 1px 3px rgba(0,0,0,.14), 0 0 0 .5px var(--border-dim); }
+.eb-segment button:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 768px) {
+  .eb-seite.active { height: calc(100dvh - 32px); }
+  .eb-seite .header-actions { flex-wrap: wrap; }
+  .eb-segment { flex: 1 1 100%; overflow-x: auto; }
+  .eb-segment button { flex: 1 0 auto; padding: 0 10px; }
+  .eb-rahmen { border-radius: var(--radius-md); min-height: 60vh; }
+}
+@media (prefers-reduced-motion: reduce) { .eb-segment button { transition: none; } }

@@ -33,6 +33,7 @@ from dashboard.docker import _docker_frames, _docker_stream_close, _ws_slot_free
 from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked, load_pkey
 from dashboard.prefs import get_prefs, set_prefs, ssh_default_secret
 from dashboard.startseite import startseite_daten
+from dashboard import einbettung as _einbettung
 from dashboard.networks import list_networks, net_action, net_add_dhcp_host, net_create, net_dhcp_hosts, net_edit, net_get_xml, net_leases, net_remove_dhcp_host, net_set_xml
 from dashboard.storage import iso_delete, iso_download, iso_download_status, iso_list, list_isos, list_pools, list_volumes, vol_create, vol_delete
 from dashboard.security import security_ban, security_bans, security_events, security_unban, security_unban_many
@@ -52,7 +53,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         if "/api/" in str(args[0] if args else ""):
             return
-        super().log_message(format, *args)
+        # Schlüssel eingebetteter Ansichten nie ins Protokoll
+        super().log_message(format, *[_einbettung.pfad_maskieren(a) for a in args])
 
     # ── Auth helpers ────────────────────────────────────────────────────────
 
@@ -83,6 +85,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def _is_superadmin(self):
         return self._get_session_role() == "superadmin"
+
+    def _sitzung_benutzer_rolle(self, sitzung):
+        """(Benutzer, Live-Rolle) zu einem Sitzungs-Token – für eingebettete Ansichten (ohne Cookie)."""
+        user = _session_mgr.validate(sitzung)
+        if not user:
+            return None
+        return user, live_role(user, _session_mgr.get_role(sitzung))
 
     def _require_admin(self):
         """403 + True, wenn die Sitzung weder admin noch superadmin ist."""
@@ -926,10 +935,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             token = self._get_session_token()
             if token:
                 _session_mgr.invalidate(token)
+                _einbettung.sitzung_beenden(token)
             self.send_response(302)
             self.send_header("Location", "/login")
             self.send_header("Set-Cookie", f"session=; HttpOnly;{self._cookie_secure()} Path=/; SameSite=Strict; Max-Age=0")
             self.end_headers()
+            return
+
+        # Eingebettete Apps: eigene Prüfung (Fähigkeits-URL + Live-Rolle), kein Cookie – siehe einbettung.py
+        if path.startswith("/einbettung/"):
+            _einbettung.bearbeiten(self, "GET")
             return
 
         # Favicon/App-Icons/Manifest sind öffentlich (Login-Seite und Browser-Tab brauchen sie)
@@ -959,7 +974,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # Rollen-Gates (lesend): Benutzer-/Docker-Verwaltung, Host-Geräteliste und
         # rohes Domain-XML nur für Superadmins; VM-/Netz-/Storage-Lesezugriff
         # (VM-Assistent braucht Netze, Pools, Volumes, ISOs) ab Rolle admin.
-        if path.startswith(("/api/user", "/api/docker", "/api/security", "/api/startseite")) or \
+        if path.startswith(("/api/user", "/api/docker", "/api/security", "/api/startseite", "/api/einbettung")) or \
            path in ("/api/vm/hostdevices", "/api/vm/xml", "/api/vm/access"):
             if self._require_superadmin():
                 return
@@ -998,6 +1013,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/ping":
             self.send_json({"ok": True})
+
+        elif path == "/api/einbettung":
+            # Neuer Schlüssel für eine eingebettete App (nur Superadmins, Gate oben)
+            _app = parse_qs(parsed.query).get("app", [""])[0]
+            if _app not in _einbettung.APPS:
+                self.send_json({"error": "Unbekannte App"}, 404)
+            else:
+                _k = _einbettung.schluessel_geben(self._get_session_token(), _app)
+                self.send_json({"url": f"/einbettung/{_k}/{_app}/"})
 
         elif path == "/api/startseite":
             # Kacheln von dash.slxt.dev (Admin-Sicht, serverseitig geholt) – nur Superadmins (Gate oben)
@@ -1611,6 +1635,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": "Request-Body zu groß"}, 413)
             return
         raw_body = self.rfile.read(content_len) if content_len > 0 else b""
+
+        if path.startswith("/einbettung/"):
+            _einbettung.bearbeiten(self, "POST", raw_body)
+            return
 
         # Login form (no auth needed)
         if path == "/login":
@@ -3044,6 +3072,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             _ext_mgr.set_status(conn["id"], "idle")
 
     def do_OPTIONS(self):
+        if urlparse(self.path).path.startswith("/einbettung/"):
+            if not self._is_allowed_ip():
+                self._deny_direct_access()
+                return
+            _einbettung.bearbeiten(self, "OPTIONS")
+            return
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")

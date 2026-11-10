@@ -811,7 +811,7 @@ function getBarClass(percent) {
 
 // Rollenmodell (siehe dashboard/auth.py): superadmin (root, jokergame) = alles;
 // admin (Gruppe dashadmin) = eigene VMs + Browser + Verbindungen; user = Browser + Verbindungen.
-const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications', 'startseite']);
+const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge']);
 const _ADMIN_PAGES = new Set(['vms']);
 const _ROLE_RANK = { user: 0, admin: 1, superadmin: 2 };
 function roleAtLeast(min) { return (_ROLE_RANK[window._userRole] ?? -1) >= (_ROLE_RANK[min] ?? 99); }
@@ -854,8 +854,54 @@ function showPage(page) {
     case 'notifications': loadNotifications(); break;
     case 'settings': renderSettings(); break;
     case 'startseite': loadStartseite(); break;
+    case 'konten': case 'backups': case 'werkzeuge': ladeEinbettung(page); break;
   }
 }
+
+// ─── Eingebettete Apps (Konten, Backups, IT-Tools) ───
+// Server: dashboard/einbettung.py. Jede Ansicht holt sich einen kurzlebigen Schlüssel (/api/einbettung) und lädt die App
+// in einem iframe mit sandbox OHNE allow-same-origin: die App kommt nicht an Command Center, Cookies oder Speicher.
+// Modus (hell/dunkel) geht per ?modus= und postMessage hinein (nur dieser eine Wert).
+const _EB_APPS = { konten: ['hetzner', 'cloudflare', 'twilio', 'claude'], backups: ['backup'], werkzeuge: ['tools'] };
+const _EB_NAMEN = { hetzner: 'Hetzner', cloudflare: 'Cloudflare', twilio: 'Twilio', claude: 'Claude', backup: 'Backups', tools: 'IT-Tools' };
+
+function _ebGewaehlt(seite) {
+  if (seite !== 'konten') return _EB_APPS[seite][0];
+  let a = null; try { a = localStorage.getItem('cc-konto'); } catch (_) {}
+  return _EB_APPS.konten.includes(a) ? a : 'hetzner';
+}
+
+async function ladeEinbettung(seite, app, neu) {
+  app = app || _ebGewaehlt(seite);
+  if (!_EB_APPS[seite] || !_EB_APPS[seite].includes(app)) return;
+  const rahmen = document.getElementById(`eb-rahmen-${seite}`);
+  const hinweis = document.getElementById(`eb-hinweis-${seite}`);
+  if (seite === 'konten') {
+    try { localStorage.setItem('cc-konto', app); } catch (_) {}
+    document.querySelectorAll('#page-konten .eb-segment button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.app === app)));
+  }
+  if (!neu && rahmen.dataset.app === app && rahmen.getAttribute('src')) return;   // Zustand behalten
+  const d = await api('/api/einbettung?app=' + encodeURIComponent(app));
+  if (!d || d.error || typeof d.url !== 'string' || !d.url.startsWith('/einbettung/')) {
+    hinweis.textContent = (d && d.error) || `${_EB_NAMEN[app]} konnte nicht geöffnet werden.`;
+    hinweis.hidden = false;
+    return;
+  }
+  hinweis.hidden = true;
+  const modus = window.slxtModus ? window.slxtModus.get() : 'dunkel';
+  rahmen.dataset.app = app;
+  rahmen.title = _EB_NAMEN[app];
+  rahmen.src = `${d.url}?modus=${modus}`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#page-konten .eb-segment button').forEach(b =>
+    b.addEventListener('click', () => ladeEinbettung('konten', b.dataset.app)));
+});
+window.addEventListener('modus', (e) => {
+  const m = e.detail === 'hell' ? 'hell' : 'dunkel';
+  document.querySelectorAll('.eb-rahmen').forEach(f => { try { f.contentWindow && f.contentWindow.postMessage({ slxtModus: m }, '*'); } catch (_) {} });
+});
 
 // ─── Startseite (Kacheln von dash.slxt.dev) ─────────
 // Daten holt der Server (/api/startseite, Admin-Sicht der Startseite). Icons kommen eingebettet:
@@ -1431,7 +1477,7 @@ async function initUserRole() {
   // Benutzerverwaltung und Docker nur für Superadmins sichtbar (Buttons starten
   // versteckt — Docker-Zugriff über den Socket ist faktisch Root auf dem Host)
   if (isSuperadmin()) {
-    for (const p of ['users', 'docker', 'security', 'notifications', 'startseite']) {
+    for (const p of ['users', 'docker', 'security', 'notifications', 'startseite', 'konten', 'backups', 'werkzeuge']) {
       const b = document.getElementById(`nav-btn-${p}`);
       if (b) b.style.display = '';
     }
@@ -1448,7 +1494,22 @@ async function initUserRole() {
   // If currently on a restricted page, redirect to dashboard
   if (!pageAllowed(currentPage)) showPage('dashboard');
   loadPrefs();
+  _zielOeffnen();
 }
+
+// Direktlinks (seit 10.11.2026): /#konten/hetzner, /#backups, /#werkzeuge, /#startseite … – auch über die Anmeldung
+// hinweg (die Login-Seite merkt sich das Ziel in sessionStorage, static/icons/ziel.js). Nur bekannte Reiter.
+function _zielOeffnen() {
+  let ziel = location.hash.slice(1);
+  if (!ziel) { try { ziel = sessionStorage.getItem('cc-ziel') || ''; } catch (_) {} }
+  try { sessionStorage.removeItem('cc-ziel'); } catch (_) {}
+  const [seite, app] = ziel.replace(/^#/, '').split('/');
+  if (!seite || !document.getElementById(`page-${seite}`) || !pageAllowed(seite)) return;
+  if (seite === 'konten' && _EB_APPS.konten.includes(app)) { try { localStorage.setItem('cc-konto', app); } catch (_) {} }
+  showPage(seite);
+  if (location.hash) history.replaceState(null, '', location.pathname);
+}
+window.addEventListener('hashchange', _zielOeffnen);
 
 document.addEventListener('DOMContentLoaded', () => {
   initUserRole();
@@ -6918,7 +6979,8 @@ function renderNotifications() {
 // optisch (Rechte regelt die Rolle); SSH-Geheimnisse kommen nie zurück zum Browser.
 const _TAB_LABELS = { processes: 'Prozesse', terminal: 'Terminal', updates: 'Updates', vms: 'VMs',
   docker: 'Docker', services: 'Services', connections: 'Verbindungen', browser: 'Browser',
-  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Mein Dashboard' };
+  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Mein Dashboard',
+  konten: 'Konten', backups: 'Backups', werkzeuge: 'IT-Tools' };
 window._prefs = null;
 
 async function loadPrefs() {

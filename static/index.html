@@ -6,7 +6,7 @@
 <!-- PWA / Installierbarkeit (additiv, ändert kein bestehendes Verhalten) -->
 <meta name="theme-color" content="#f4f1fb">
 <meta name="color-scheme" content="light">
-<script src="/icons/modus.js?v=4"></script>
+<script src="/icons/modus.js?v=6"></script>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -32,6 +32,18 @@
       <button id="nav-btn-startseite" class="nav-item" onclick="showPage('startseite')" title="Mein Dashboard" style="display:none;">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
         <span class="nav-tooltip">Mein Dashboard</span>
+      </button>
+      <button id="nav-btn-konten" class="nav-item" onclick="showPage('konten')" title="Konten" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/></svg>
+        <span class="nav-tooltip">Konten</span>
+      </button>
+      <button id="nav-btn-backups" class="nav-item" onclick="showPage('backups')" title="Backups" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>
+        <span class="nav-tooltip">Backups</span>
+      </button>
+      <button id="nav-btn-werkzeuge" class="nav-item" onclick="showPage('werkzeuge')" title="IT-Tools" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z"/></svg>
+        <span class="nav-tooltip">IT-Tools</span>
       </button>
       <button id="nav-btn-processes" class="nav-item" onclick="showPage('processes')" title="Prozesse">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -661,6 +673,60 @@
       <div id="st-inhalt" aria-live="polite">
         <div class="loading-overlay"><span class="spinner"></span> Lade Dashboard…</div>
       </div>
+    </div>
+
+    <!-- ══════════ KONTEN (eingebettet, siehe dashboard/einbettung.py) ══════════ -->
+    <div id="page-konten" class="page eb-seite">
+      <div class="header-bar">
+        <h1 class="header-title"><span>Meine</span> Konten</h1>
+        <div class="header-actions">
+          <div class="eb-segment" role="group" aria-label="Konto wählen">
+            <button type="button" data-app="hetzner">Hetzner</button>
+            <button type="button" data-app="cloudflare">Cloudflare</button>
+            <button type="button" data-app="twilio">Twilio</button>
+            <button type="button" data-app="claude">Claude</button>
+          </div>
+          <button class="btn" type="button" onclick="ladeEinbettung('konten', null, true)" title="Ansicht neu laden">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Neu laden
+          </button>
+        </div>
+      </div>
+      <p class="eb-hinweis" id="eb-hinweis-konten" hidden></p>
+      <iframe class="eb-rahmen" id="eb-rahmen-konten" title="Konten" referrerpolicy="no-referrer" allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
+    </div>
+
+    <!-- ══════════ ZENTRALE (eingebettet, siehe dashboard/einbettung.py) ══════════ -->
+    <div id="page-backups" class="page eb-seite">
+      <div class="header-bar">
+        <h1 class="header-title"><span>Backup</span> Zentrale</h1>
+        <div class="header-actions">
+          <button class="btn" type="button" onclick="ladeEinbettung('backups', null, true)" title="Ansicht neu laden">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Neu laden
+          </button>
+        </div>
+      </div>
+      <p class="eb-hinweis" id="eb-hinweis-backups" hidden></p>
+      <iframe class="eb-rahmen" id="eb-rahmen-backups" title="Zentrale" referrerpolicy="no-referrer" allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
+    </div>
+
+    <!-- ══════════ TOOLS (eingebettet, siehe dashboard/einbettung.py) ══════════ -->
+    <div id="page-werkzeuge" class="page eb-seite">
+      <div class="header-bar">
+        <h1 class="header-title"><span>IT</span> Tools</h1>
+        <div class="header-actions">
+          <button class="btn" type="button" onclick="ladeEinbettung('werkzeuge', null, true)" title="Ansicht neu laden">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Neu laden
+          </button>
+        </div>
+      </div>
+      <p class="eb-hinweis" id="eb-hinweis-werkzeuge" hidden></p>
+      <iframe class="eb-rahmen" id="eb-rahmen-werkzeuge" title="Tools" referrerpolicy="no-referrer" allow="clipboard-write"
+        sandbox="allow-scripts allow-forms allow-downloads allow-popups allow-popups-to-escape-sandbox allow-modals"></iframe>
     </div>
 
     <!-- ══════════ SERVICES PAGE ══════════ -->

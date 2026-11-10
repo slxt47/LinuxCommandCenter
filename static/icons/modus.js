@@ -13,6 +13,10 @@
   const MOND = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>';
   let modus = 'dunkel';
   try { if (localStorage.getItem('modus') === 'hell') modus = 'hell'; } catch (e) { /* privat/gesperrt: dunkel */ }
+  // Seit 10.11.2026: eingebettet im Linux Command Center (iframe-Sandbox, kein eigener Speicher). Dann kommt der Modus
+  // aus ?modus= und per Nachricht vom Elternfenster, und der eigene Schalter ist ausgeblendet (das CC schaltet).
+  const eingebettet = window.parent !== window;
+  try { const q = new URLSearchParams(location.search).get('modus'); if (q === 'hell' || q === 'dunkel') modus = q; } catch (e) { /* egal */ }
 
   function schalterAktualisieren() {
     document.querySelectorAll('[data-modus-schalter]').forEach((b) => {
@@ -20,6 +24,7 @@
       b.setAttribute('aria-label', ziel);
       b.setAttribute('title', ziel);
       if (b.dataset.modusSchalter !== 'eigen') b.innerHTML = modus === 'dunkel' ? SONNE : MOND;
+      if (eingebettet) b.hidden = true;
     });
   }
   function anwenden() {
@@ -69,6 +74,12 @@
     const b = e.target.closest && e.target.closest('[data-modus-schalter]');
     if (b) { e.preventDefault(); sanftWechseln(); }
   });
+  if (eingebettet) {
+    addEventListener('message', (e) => {
+      const m = e.source === window.parent && e.data && e.data.slxtModus;
+      if (m === 'hell' || m === 'dunkel') { modus = m; anwenden(); dispatchEvent(new CustomEvent('modus', { detail: modus })); }
+    });
+  }
   // Andere Tabs derselben Seite ziehen mit
   addEventListener('storage', (e) => { if (e.key === 'modus') { modus = e.newValue === 'dunkel' ? 'dunkel' : 'hell'; anwenden(); dispatchEvent(new CustomEvent('modus', { detail: modus })); } });
 })();
