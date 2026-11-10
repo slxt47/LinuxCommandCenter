@@ -811,7 +811,7 @@ function getBarClass(percent) {
 
 // Rollenmodell (siehe dashboard/auth.py): superadmin (root, jokergame) = alles;
 // admin (Gruppe dashadmin) = eigene VMs + Browser + Verbindungen; user = Browser + Verbindungen.
-const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications']);
+const _SUPERADMIN_PAGES = new Set(['processes', 'terminal', 'updates', 'services', 'users', 'docker', 'security', 'notifications', 'startseite']);
 const _ADMIN_PAGES = new Set(['vms']);
 const _ROLE_RANK = { user: 0, admin: 1, superadmin: 2 };
 function roleAtLeast(min) { return (_ROLE_RANK[window._userRole] ?? -1) >= (_ROLE_RANK[min] ?? 99); }
@@ -853,8 +853,116 @@ function showPage(page) {
     case 'security': loadSecurity(); break;
     case 'notifications': loadNotifications(); break;
     case 'settings': renderSettings(); break;
+    case 'startseite': loadStartseite(); break;
   }
 }
+
+// ─── Startseite (Kacheln von dash.slxt.dev) ─────────
+// Daten holt der Server (/api/startseite, Admin-Sicht der Startseite). Icons kommen eingebettet:
+// fa = [breite, höhe, pfad(e)], sonst bild = data-URL. Alles wird als Text/Attribut gesetzt, nie als HTML.
+
+let _stDaten = null;
+
+async function loadStartseite(neu) {
+  const box = document.getElementById('st-inhalt');
+  if (neu || !_stDaten) box.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Lade Startseite…</div>';
+  const d = await api('/api/startseite' + (neu ? '?neu=1' : ''));
+  if (!d || d.error) {
+    box.innerHTML = '';
+    const p = document.createElement('div');
+    p.className = 'empty-state';
+    p.textContent = (d && d.error) || 'Startseite nicht erreichbar.';
+    box.appendChild(p);
+    return;
+  }
+  _stDaten = d;
+  if (d.url) document.getElementById('st-extern').href = d.url;
+  renderStartseite();
+}
+
+function _stIcon(icon, ersatz) {
+  const span = document.createElement('span');
+  span.className = 'st-icon';
+  span.setAttribute('aria-hidden', 'true');
+  if (icon && Array.isArray(icon.fa)) {
+    const [w, h, pfade] = icon.fa;
+    const ns = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${+w || 512} ${+h || 512}`);
+    for (const dd of (Array.isArray(pfade) ? pfade : [pfade])) {
+      const p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', String(dd));
+      p.setAttribute('fill', 'currentColor');
+      svg.appendChild(p);
+    }
+    span.appendChild(svg);
+  } else if (icon && typeof icon.bild === 'string' && icon.bild.startsWith('data:image/')) {
+    const img = document.createElement('img');
+    img.src = icon.bild; img.alt = ''; img.decoding = 'async';
+    span.appendChild(img);
+  } else {
+    span.classList.add('st-initial');
+    span.textContent = (ersatz || '?').trim().charAt(0).toUpperCase();
+  }
+  return span;
+}
+
+function renderStartseite() {
+  const d = _stDaten; if (!d) return;
+  const box = document.getElementById('st-inhalt');
+  const q = (document.getElementById('st-suche').value || '').trim().toLowerCase();
+  const SICHT = { oeffentlich: 'öffentlich', angemeldet: 'angemeldet', zugewiesen: 'zugewiesen' };
+  box.innerHTML = '';
+  let treffer = 0;
+  for (const g of d.gruppen || []) {
+    const kacheln = (g.kacheln || []).filter(k => !q ||
+      `${k.titel} ${k.beschreibung || ''} ${k.url} ${g.name}`.toLowerCase().includes(q));
+    if (!kacheln.length) continue;
+    treffer += kacheln.length;
+    const sec = document.createElement('section');
+    sec.className = 'st-gruppe';
+    const kopf = document.createElement('h2');
+    kopf.className = 'st-gruppe-titel';
+    kopf.appendChild(_stIcon(g.icon, g.name));
+    const name = document.createElement('span'); name.textContent = g.name; kopf.appendChild(name);
+    const tag = document.createElement('span'); tag.className = 'st-sicht';
+    tag.textContent = SICHT[g.sichtbarkeit] || g.sichtbarkeit || ''; kopf.appendChild(tag);
+    sec.appendChild(kopf);
+    const grid = document.createElement('div'); grid.className = 'st-grid';
+    for (const k of kacheln) {
+      const a = document.createElement('a');
+      a.className = 'st-kachel';
+      try { const u = new URL(k.url); if (u.protocol === 'https:' || u.protocol === 'http:') a.href = u.href; } catch (_) {}
+      a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.appendChild(_stIcon(k.icon, k.titel));
+      const txt = document.createElement('span'); txt.className = 'st-text';
+      const t = document.createElement('span'); t.className = 'st-titel'; t.textContent = k.titel; txt.appendChild(t);
+      const b = document.createElement('span'); b.className = 'st-beschr';
+      b.textContent = k.beschreibung || (a.href ? new URL(a.href).host : ''); txt.appendChild(b);
+      a.appendChild(txt);
+      if (k.status) {
+        const s = document.createElement('span');
+        s.className = 'st-status ' + (k.status.online ? 'an' : 'aus');
+        s.title = k.status.online ? `Online${k.status.ms != null ? ` · ${k.status.ms} ms` : ''}` : 'Nicht erreichbar';
+        const sr = document.createElement('span'); sr.className = 'sr-only'; sr.textContent = s.title;
+        s.appendChild(sr);
+        a.appendChild(s);
+      }
+      grid.appendChild(a);
+    }
+    sec.appendChild(grid);
+    box.appendChild(sec);
+  }
+  if (!treffer) {
+    const p = document.createElement('div'); p.className = 'empty-state';
+    p.textContent = q ? 'Keine Kachel passt zur Suche.' : 'Keine Kacheln vorhanden.';
+    box.appendChild(p);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('st-suche')?.addEventListener('input', renderStartseite);
+});
 
 // ─── Dashboard ──────────────────────────────────────
 
@@ -1323,7 +1431,7 @@ async function initUserRole() {
   // Benutzerverwaltung und Docker nur für Superadmins sichtbar (Buttons starten
   // versteckt — Docker-Zugriff über den Socket ist faktisch Root auf dem Host)
   if (isSuperadmin()) {
-    for (const p of ['users', 'docker', 'security', 'notifications']) {
+    for (const p of ['users', 'docker', 'security', 'notifications', 'startseite']) {
       const b = document.getElementById(`nav-btn-${p}`);
       if (b) b.style.display = '';
     }
@@ -6810,7 +6918,7 @@ function renderNotifications() {
 // optisch (Rechte regelt die Rolle); SSH-Geheimnisse kommen nie zurück zum Browser.
 const _TAB_LABELS = { processes: 'Prozesse', terminal: 'Terminal', updates: 'Updates', vms: 'VMs',
   docker: 'Docker', services: 'Services', connections: 'Verbindungen', browser: 'Browser',
-  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer' };
+  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Startseite' };
 window._prefs = null;
 
 async function loadPrefs() {

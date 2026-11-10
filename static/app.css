@@ -2044,3 +2044,46 @@ input::placeholder, textarea::placeholder { color: var(--text-muted); }
   .main-content { padding-top: calc(14px + env(safe-area-inset-top)) !important; }
   [style*="z-index:500"] { padding-top: env(safe-area-inset-top); }
 }
+
+/* ═══ Startseite (Kacheln von dash.slxt.dev) ═══════ */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.st-gruppe { margin: 0 0 28px; }
+.st-gruppe-titel {
+  display: flex; align-items: center; gap: 10px; margin: 0 0 12px;
+  font: 700 17px/1.3 var(--font-anzeige); letter-spacing: -.01em; color: var(--text-primary);
+}
+.st-gruppe-titel .st-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--accent-ghost); color: var(--accent); }
+.st-gruppe-titel .st-icon svg { width: 15px; height: 15px; }
+.st-sicht {
+  margin-left: 2px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border-dim);
+  font: 500 12px/1.5 var(--font-sans); color: var(--text-secondary);
+}
+.st-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.st-kachel {
+  position: relative; display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 64px; padding: 12px 14px;
+  border: 1px solid var(--border-dim); border-radius: var(--radius-md); background: var(--bg-card);
+  box-shadow: var(--schatten); color: var(--text-primary); text-decoration: none;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.st-kachel:hover { border-color: var(--border-glow); transform: translateY(-1px); box-shadow: var(--schatten-hoch); }
+.st-kachel:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.st-icon {
+  flex: none; display: grid; place-items: center; width: 40px; height: 40px; overflow: hidden;
+  border-radius: 10px; background: var(--bg-input); color: var(--accent);
+}
+.st-icon svg { width: 20px; height: 20px; }
+.st-icon img { width: 100%; height: 100%; object-fit: contain; }
+.st-initial { font: 700 16px var(--font-anzeige); }
+.st-text { display: flex; flex-direction: column; min-width: 0; }
+.st-titel { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-beschr { font-size: 12.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-status { position: absolute; top: 10px; right: 10px; width: 8px; height: 8px; border-radius: 50%; }
+.st-status.an { background: var(--green); }
+.st-status.aus { background: var(--red); box-shadow: 0 0 0 3px var(--red-glow); }
+#st-extern { text-decoration: none; }
+#st-inhalt { padding-bottom: 24px; min-width: 0; }
+@media (max-width: 768px) {
+  #page-startseite .header-actions { flex-wrap: wrap; }
+  #page-startseite .header-search { flex: 1 1 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .st-kachel { transition: none; } .st-kachel:hover { transform: none; } }

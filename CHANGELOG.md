@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.2.0 – 2026-11-10
+
+**Neuer Reiter „Startseite“** (nur Superadmins, in den Einstellungen ausblendbar)
+- Zeigt alle Gruppen und Kacheln des eigenen Dashboards (dash.slxt.dev) mit Icons, Sichtbarkeit und Online-Status, mit Suche.
+- Der Server holt die Daten über `GET /api/startseite` vom Startseiten-Container (`http://127.0.0.1:9310/api/intern/start`, Admin-Sicht, nur lesend, 30 s Zwischenspeicher). Der Browser spricht nie direkt mit der Startseite; dash.slxt.dev bleibt unverändert.
+- Token in `/data/startseite-token` (0600), Adresse änderbar über `STARTSEITE_INTERN_URL`. Ohne Token zeigt der Reiter einen Hinweis.
+- Icons kommen eingebettet (Font-Awesome-Pfade bzw. `data:`-Bilder) und werden nur als Attribut/Text gesetzt, nie als HTML.
+
 ## 2.1.2 – 2026-11-09
 
 Übernimmt die Änderungen aus 2.0.1 (unten) in das neue Design: Entsperren mehrerer IPs, Browser-Sessions nur auf `127.0.0.1`, ARM64. Favicon und Login-Seite kommen aus 2.1.x.

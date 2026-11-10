@@ -32,6 +32,7 @@ from dashboard.consoles import _console_url, _kasm_client_inject, _proxy_mgr, _v
 from dashboard.docker import _docker_frames, _docker_stream_close, _ws_slot_free, _ws_slot_take, docker_changes, docker_container, docker_container_action, docker_container_remove, docker_container_rename, docker_container_update, docker_containers, docker_df, docker_events, docker_exec_cleanup, docker_exec_message_de, docker_exec_open, docker_exec_resize, docker_archive_open, docker_archive_put, docker_container_commit, docker_container_create, docker_hub_search, docker_hub_tags, docker_image_build, docker_image_history, docker_image_inspect, docker_image_pull, docker_image_remove, docker_image_save_open, docker_image_tag, docker_images, docker_inspect, docker_job, docker_jobs, docker_logs, docker_logs_open, docker_network, docker_network_connect, docker_network_create, docker_network_disconnect, docker_network_remove, docker_networks, docker_prune, docker_prune_dryrun, docker_stack_action, docker_stack_compose, docker_stacks, docker_stats, docker_system, docker_top, docker_volume, docker_volume_create, docker_volume_remove, docker_volumes
 from dashboard.extconn import ExtConnManager, _ext_mgr, _ssrf_blocked, load_pkey
 from dashboard.prefs import get_prefs, set_prefs, ssh_default_secret
+from dashboard.startseite import startseite_daten
 from dashboard.networks import list_networks, net_action, net_add_dhcp_host, net_create, net_dhcp_hosts, net_edit, net_get_xml, net_leases, net_remove_dhcp_host, net_set_xml
 from dashboard.storage import iso_delete, iso_download, iso_download_status, iso_list, list_isos, list_pools, list_volumes, vol_create, vol_delete
 from dashboard.security import security_ban, security_bans, security_events, security_unban, security_unban_many
@@ -958,7 +959,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         # Rollen-Gates (lesend): Benutzer-/Docker-Verwaltung, Host-Geräteliste und
         # rohes Domain-XML nur für Superadmins; VM-/Netz-/Storage-Lesezugriff
         # (VM-Assistent braucht Netze, Pools, Volumes, ISOs) ab Rolle admin.
-        if path.startswith(("/api/user", "/api/docker", "/api/security")) or \
+        if path.startswith(("/api/user", "/api/docker", "/api/security", "/api/startseite")) or \
            path in ("/api/vm/hostdevices", "/api/vm/xml", "/api/vm/access"):
             if self._require_superadmin():
                 return
@@ -997,6 +998,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         elif path == "/api/ping":
             self.send_json({"ok": True})
+
+        elif path == "/api/startseite":
+            # Kacheln von dash.slxt.dev (Admin-Sicht, serverseitig geholt) – nur Superadmins (Gate oben)
+            self.send_json(startseite_daten(neu=parse_qs(parsed.query).get("neu", [""])[0] == "1"))
 
         elif path == "/api/setkbmap":
             layout = parse_qs(parsed.query).get("layout", [""])[0]
