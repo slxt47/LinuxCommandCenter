@@ -2,7 +2,7 @@
 
 ## 2.2.0 – 2026-11-10
 
-**Neuer Reiter „Startseite“** (nur Superadmins, in den Einstellungen ausblendbar)
+**Neuer Reiter „Mein Dashboard“** (intern `startseite`) (nur Superadmins, in den Einstellungen ausblendbar)
 - Zeigt alle Gruppen und Kacheln des eigenen Dashboards (dash.slxt.dev) mit Icons, Sichtbarkeit und Online-Status, mit Suche.
 - Der Server holt die Daten über `GET /api/startseite` vom Startseiten-Container (`http://127.0.0.1:9310/api/intern/start`, Admin-Sicht, nur lesend, 30 s Zwischenspeicher). Der Browser spricht nie direkt mit der Startseite; dash.slxt.dev bleibt unverändert.
 - Token in `/data/startseite-token` (0600), Adresse änderbar über `STARTSEITE_INTERN_URL`. Ohne Token zeigt der Reiter einen Hinweis.

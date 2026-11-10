@@ -49,7 +49,7 @@ def startseite_daten(neu=False):
     except urllib.error.HTTPError as e:
         return {"error": f"Startseite antwortet mit {e.code}."}
     except (OSError, ValueError):
-        return {"error": "Startseite nicht erreichbar."}
+        return {"error": "Dashboard (Startseite) nicht erreichbar."}
     with _lock:
         _cache.update(zeit=time.time(), daten=daten)
     return daten

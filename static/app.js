@@ -865,13 +865,13 @@ let _stDaten = null;
 
 async function loadStartseite(neu) {
   const box = document.getElementById('st-inhalt');
-  if (neu || !_stDaten) box.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Lade Startseite…</div>';
+  if (neu || !_stDaten) box.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> Lade Dashboard…</div>';
   const d = await api('/api/startseite' + (neu ? '?neu=1' : ''));
   if (!d || d.error) {
     box.innerHTML = '';
     const p = document.createElement('div');
     p.className = 'empty-state';
-    p.textContent = (d && d.error) || 'Startseite nicht erreichbar.';
+    p.textContent = (d && d.error) || 'Dashboard nicht erreichbar.';
     box.appendChild(p);
     return;
   }
@@ -6918,7 +6918,7 @@ function renderNotifications() {
 // optisch (Rechte regelt die Rolle); SSH-Geheimnisse kommen nie zurück zum Browser.
 const _TAB_LABELS = { processes: 'Prozesse', terminal: 'Terminal', updates: 'Updates', vms: 'VMs',
   docker: 'Docker', services: 'Services', connections: 'Verbindungen', browser: 'Browser',
-  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Startseite' };
+  security: 'Sicherheit', notifications: 'Benachrichtigungen', users: 'Benutzer', startseite: 'Mein Dashboard' };
 window._prefs = null;
 
 async function loadPrefs() {
